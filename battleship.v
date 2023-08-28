@@ -13,6 +13,7 @@ fn main() {
 		user_data: app
 		event_fn: event
 		frame_fn: frame
+		init_fn: init
 		hide_cursor: true
 	)
 	app.tui.run() or {
@@ -22,39 +23,47 @@ fn main() {
 
 struct App {
 mut:
-    tui &tui.Context = 0
+    tui &tui.Context = unsafe { nil }
 	width int
 	height int
 	colors []Color
+	grid struct {
+	mut:
+		player Grid
+		enemy Grid
+	}
 }
 
-fn event(e &tui.Event, x voidptr) {
-    mut app := &App(x)
+fn init(mut app App) {
+	app.tui.set_bg_color(r: 0x0f, g: 0x80, b: 0xef)
+}
+
+fn event(e &tui.Event, mut app App) {
     println(e)
     if e.typ == .key_down && e.code == .escape {
         exit(0)
     }
 }
 
-fn frame(x voidptr) {
-    mut app := &App(x)
-
+fn frame(mut app App) {
     app.tui.clear()
 
 	app.width, app.height = term.get_terminal_size()
+	app.grid.player.draw(mut app)
+	app.grid.enemy.draw(mut app)
+	
+	// m := Menu{
+	// 	label: 'Select Difficulty:'
+	// 	items: [
+	// 		MenuItem{label: 'Easy', state: .disabled},
+	// 		MenuItem{label: 'Medium'},
+	// 		MenuItem{label: 'Hard', state: .selected}
+	// 		MenuItem{label: 'Excruciating', state: .active}
+	// 	]
+	// }
+	// m.draw_center(mut app)
 
-	m := Menu{
-		label: 'Select Difficulty:'
-		items: [
-			MenuItem{label: 'Easy', state: .disabled},
-			MenuItem{label: 'Medium'},
-			MenuItem{label: 'Hard', state: .selected}
-			MenuItem{label: 'Excruciating', state: .active}
-		]
-	}
-	m.draw_center(mut app)
-
-    app.tui.set_cursor_position(0, 0)
+    // app.tui.set_cursor_position(0, 0)
 
     app.tui.reset()
     app.tui.flush()
@@ -66,6 +75,6 @@ fn draw_text_center(mut app App, text string) {
 }
 
 [if debug]
-fn debug<T>(x T) {
+fn debug[T](x T) {
 	println(x)
 }

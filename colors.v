@@ -9,11 +9,11 @@ struct Color {
 	b int
 }
 
-fn from<T>(x T) Color {
+fn Color.from[T](x T) Color {
 	match typeof(x).name {
 		'int' {
 			r := (x>>16)&0x0ff
-			g := (rxgb>>8) &0x0ff
+			g := (x>>8) &0x0ff
 			b := (x) &0x0ff
 			return Color{
 				r: r
@@ -56,9 +56,9 @@ fn (c Color) int() int {
 
 fn (c Color) to_tui_color() tui.Color {
 	return tui.Color{
-		r: byte(c.r)
-		g: byte(c.g)
-		b: byte(c.b)
+		r: u8(c.r)
+		g: u8(c.g)
+		b: u8(c.b)
 	}
 }
 
