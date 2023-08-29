@@ -1,7 +1,8 @@
 struct Cursor {
+	Pos
 mut:
-	x int
-	y int
+	selected Pos   = Pos.null()
+	history  []Pos = []Pos{cap: 200}
 }
 
 fn (c Cursor) val() string {
@@ -20,4 +21,25 @@ fn (c Cursor) val() string {
 		else { 'err' }
 	}
 	return row + col
+}
+
+[inline]
+fn (mut c Cursor) nullify() {
+	c.history << c.selected
+	c.selected = Pos.null()
+}
+
+[inline]
+fn (c Cursor) has_selected() bool {
+	return !c.Pos.is_null()
+}
+
+[inline]
+fn (c Cursor) last() Pos {
+	return c.history.last()
+}
+
+fn (mut c Cursor) select_pos() {
+	c.history << c.selected
+	c.selected = c.Pos
 }

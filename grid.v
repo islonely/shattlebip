@@ -11,7 +11,22 @@ const (
 		'miss':          term.white('✗')
 	}
 	cursor_color = term.bright_yellow
+	ship_sizes   = {
+		Ship.carrier: 5
+		.battleship:  4
+		.cruiser:     3
+		.submarine:   3
+		.destroyer:   2
+	}
 )
+
+enum Ship {
+	carrier
+	battleship
+	cruiser
+	submarine
+	destroyer
+}
 
 enum Neutrality {
 	neutral
@@ -25,6 +40,10 @@ enum CellState {
 	enemy_boat
 	hit
 	miss
+}
+
+fn good_color(str string) string {
+	return term.bg_rgb(0, 100, 30, str)
 }
 
 struct Cell {
@@ -45,6 +64,26 @@ mut:
 	grid [10][10]Cell = [10][10]Cell{init: [10]Cell{}}
 }
 
+fn (mut g Grid) neutralize() {
+	for y in 0 .. g.grid.len {
+		for x in 0 .. g.grid[y].len {
+			mut new := g.grid[y][x]
+			new.neutrality = .neutral
+			g.grid[y][x] = new
+		}
+	}
+}
+
+fn (mut g Grid) badify() {
+	for y in 0 .. g.grid.len {
+		for x in 0 .. g.grid[y].len {
+			mut new := g.grid[y][x]
+			new.neutrality = .bad
+			g.grid[y][x] = new
+		}
+	}
+}
+
 fn (g Grid) string(cursor Cursor) string {
 	mut grid_bldr := strings.new_builder(500)
 	prefix := ' __'
@@ -61,10 +100,19 @@ fn (g Grid) string(cursor Cursor) string {
 	for y, row in g.grid {
 		grid_bldr.write_string('| ${u8(y + 65).ascii_str()}  ')
 		for x, cell in row {
+			last_cell := if x == 0 { cell } else { g.grid[y][x - 1] }
 			if y == cursor.y && x == cursor.x && cell.state == .empty {
 				grid_bldr.write_string(cursor_color('|') + cursor_color('_'))
 			} else if y == cursor.y && x in [cursor.x, cursor.x + 1] {
 				grid_bldr.write_string(cursor_color('|') + cell_pictograph[cell.state.str()])
+			} else if cell.neutrality == .good {
+				grid_bldr.write_string(good_color('|${cell_pictograph[cell.state.str()]}'))
+			} else if last_cell.neutrality == .good {
+				grid_bldr.write_string(good_color('|') + cell_pictograph[cell.state.str()])
+			} else if cell.neutrality == .bad {
+				grid_bldr.write_string(good_color('|${cell_pictograph[cell.state.str()]}'))
+			} else if last_cell.neutrality == .bad {
+				grid_bldr.write_string(term.bg_red('|') + cell_pictograph[cell.state.str()])
 			} else {
 				grid_bldr.write_string(term.bright_blue('|') + cell_pictograph[cell.state.str()])
 			}

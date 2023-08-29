@@ -18,13 +18,38 @@ fn main() {
 	app.tui.run() or { panic('Failed to run app.') }
 }
 
+enum GameState {
+	placing_ships
+}
+
+struct Pos {
+mut:
+	x int
+	y int
+}
+
+// null returns a `Pos` that points to outside the gridspace.
+[inline]
+fn Pos.null() Pos {
+	return Pos{-1, -1}
+}
+
+// is_null returns true if the position exists outside the gridspace.
+[inline]
+fn (pos Pos) is_null() bool {
+	return pos.x < 0 || pos.y < 0 || pos.x > 9 || pos.y > 9
+}
+
 struct App {
 mut:
-	tui    &tui.Context = unsafe { nil }
-	width  int
-	height int
-	colors []Color
-	cursor Cursor
+	tui               &tui.Context = unsafe { nil }
+	width             int
+	height            int
+	colors            []Color
+	cursor            Cursor
+	state             GameState = .placing_ships
+	ship_needs_placed []Ship    = [.carrier, .battleship, .cruiser, .submarine, .destroyer]
+	ship_rotated      bool
 
 	player Grid = Grid{
 		name: 'Player'
@@ -67,8 +92,18 @@ fn event(e &tui.Event, mut app App) {
 					app.cursor.x++
 				}
 			}
+			.space {
+				app.handle_space_press()
+			}
 			else {}
 		}
+	}
+}
+
+fn (mut app App) handle_space_press() {
+	app.cursor.select_pos()
+	match app.state {
+		.placing_ships {}
 	}
 }
 
@@ -80,7 +115,25 @@ fn frame(mut app App) {
 	player := app.player.string(app.cursor)
 	enemy := app.enemy.string(app.cursor)
 	app.tui.draw_text(0, 0, merge_strings(player, enemy, 4, '::'))
-	app.tui.draw_text(0, 15, 'POS: ${app.cursor.val()}')
+	app.tui.draw_text(0, 15, Banner.text('Select locations for your ships.'))
+	app.tui.draw_text(0, 19, 'POS: ${app.cursor.val()}')
+
+	match app.state {
+		.placing_ships {
+			size := ship_sizes[app.ship_needs_placed.last()]
+			ysize := if app.ship_rotated { app.cursor.y + size } else { app.cursor.y + 1 }
+			xsize := if !app.ship_rotated { app.cursor.x + size } else { app.cursor.x + 1 }
+			for y, row in app.player.grid {
+				for x, cell in row {
+					if x >= app.cursor.x && x < xsize && y >= app.cursor.y && y < ysize {
+						app.player.grid[y][x] = Cell{.good, .friendly_boat}
+					} else {
+						app.player.grid[y][x] = grid_copy[y][x]
+					}
+				}
+			}
+		}
+	}
 
 	// m := Menu{
 	// 	label: 'Select Difficulty:'
