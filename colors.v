@@ -2,102 +2,59 @@ import term.ui as tui
 import rand
 import rand.seed
 import time
+import math
 
-struct Color {
-	r int
-	g int
-	b int
-}
+type Color = tui.Color
 
-fn Color.from[T](x T) Color {
-	match typeof(x).name {
-		'int' {
-			r := (x>>16)&0x0ff
-			g := (x>>8) &0x0ff
-			b := (x) &0x0ff
-			return Color{
-				r: r
-				g: g
-				b: b
-			}
-		}
-		'ui.Color' {
-			return Color{
-				r: x.r.int()
-				g: x.g.int()
-				b: x.b.int()
-			}
-		}
-		else {
-			return Color{}
-		}
+fn Color.hsl(h f32, s f32, l f32) Color {
+	if s == 0 {
+		ll := u8(l)
+		return Color{ll, ll, ll}
 	}
-}
 
-fn (c1 Color) == (c2 Color) bool {
-	if c1.int() == c2.int() {
-		return true
+	qq := if l < 0.5 {
+		l * (1 + s)
 	} else {
-		return false
+		l + s - (l * s)
+	}
+	pp := (2 * l) - qq
+	return Color{
+		r: u8(hue(pp, qq, h + 1.0 / 3.0) * 255)
+		g: u8(hue(pp, qq, h) * 255)
+		b: u8(hue(pp, qq, h - 1.0 / 3.0) * 255)
 	}
 }
 
-fn (c1 Color) < (c2 Color) bool {
-	if c1.int() < c2.int() {
-		return true
-	} else {
-		return false
+fn Color.random() Color {
+	return Color{rand.u8(), rand.u8(), rand.u8()}
+}
+
+fn Color.pastel() Color {
+	// vfmt off
+	return Color.hsl(
+		rand.f32(),
+		rand.f32_in_range(0.25, 0.95) or { panic('fn Color.pastel(): this should never happen.') },
+		0.75 // rand.f32_in_range(0.75, 0.9) or { panic('fn Color.pasetl(): this should never happen.') }
+	)
+	// vfmt on
+}
+
+fn hue(p f32, q f32, _t f32) f32 {
+	mut t := _t
+	if t < 0 {
+		t += 1
 	}
-}
-
-fn (c Color) int() int {
-	return ((c.r & 0x0ff) << 16) | ((c.g & 0x0ff) << 8) | (c.b & 0x0ff)
-}
-
-fn (c Color) to_tui_color() tui.Color {
-	return tui.Color{
-		r: u8(c.r)
-		g: u8(c.g)
-		b: u8(c.b)
+	if t > 1 {
+		t -= 1
 	}
-}
-
-fn (colors []Color) int() []int {
-	mut arr := []int{}
-	for color in colors {
-		arr << color.int()
+	if t < 1.0 / 6.0 {
+		return p + (q - p) * 6 * t
 	}
-	return arr
-}
-
-fn sort(mut colors []Color) {
-	quick_sort(mut colors, 0, colors.len - 1)
-}
-
-fn quick_sort(mut colors []Color, low int, high int) {
-	if low < high {
-		pidx := partition(mut colors, low, high)
-
-		quick_sort(mut colors, low, pidx - 1)
-		quick_sort(mut colors, pidx + 1, high)
+	if t < 1.0 / 2.0 {
+		return q
 	}
-}
-
-fn partition(mut colors []Color, low int, high int) int {
-	pivot := colors[high]
-	mut i := low - 1
-	for j := low; j < high; j++ {
-		if colors[j] <= pivot {
-			i++
-			tmp := colors[i]
-			colors[i] = colors[j]
-			colors[j] = tmp
-		}
+	if t < 2.0 / 3.0 {
+		return p + (q - p) * (2.0 / 3.0 - t) * 6
 	}
-
-	tmp := colors[i + 1]
-	colors[i + 1] = colors[high]
-	colors[high] = tmp
-
-	return i + 1
+	return p
 }
