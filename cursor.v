@@ -31,7 +31,7 @@ fn (mut c Cursor) nullify() {
 
 [inline]
 fn (c Cursor) has_selected() bool {
-	return !c.Pos.is_null()
+	return !c.selected.is_null()
 }
 
 [inline]

@@ -3,30 +3,33 @@ import term
 import strings
 
 const (
+	// cell_pictograph = {
+	// 	'empty':         term.bright_blue('_')
+	// 	'friendly_boat': term.cyan('₪')
+	// 	'enemy_boat':    term.bright_magenta('₪')
+	// 	'hit':           term.bright_red('✛')
+	// 	'miss':          term.white('✗')
+	// }
+
 	cell_pictograph = {
-		'empty':         term.bright_blue('_')
-		'friendly_boat': term.cyan('₪')
-		'enemy_boat':    term.bright_magenta('₪')
-		'hit':           term.bright_red('✛')
-		'miss':          term.white('✗')
+		'carrier':    term_pastel('₪')
+		'battleship': term_pastel('₪')
+		'cruiser':    term_pastel('₪')
+		'submarine':  term_pastel('₪')
+		'destroyer':  term_pastel('₪')
+		'empty':      term.bright_blue('_')
+		'hit':        term.bright_red('✛')
+		'miss':       term.white('✗')
 	}
 	cursor_color = term.bright_yellow
 	ship_sizes   = {
-		Ship.carrier: 5
-		.battleship:  4
-		.cruiser:     3
-		.submarine:   3
-		.destroyer:   2
+		CellState.carrier: 5
+		.battleship:       4
+		.cruiser:          3
+		.submarine:        3
+		.destroyer:        2
 	}
 )
-
-enum Ship {
-	carrier
-	battleship
-	cruiser
-	submarine
-	destroyer
-}
 
 enum Neutrality {
 	neutral
@@ -36,10 +39,21 @@ enum Neutrality {
 
 enum CellState {
 	empty
+	carrier
+	battleship
+	cruiser
+	submarine
+	destroyer
 	friendly_boat
 	enemy_boat
 	hit
 	miss
+}
+
+[inline]
+fn term_pastel(str string) string {
+	p := Color.pastel()
+	return term.rgb(p.r, p.g, p.g, str)
 }
 
 fn good_color(str string) string {
@@ -50,6 +64,7 @@ struct Cell {
 mut:
 	neutrality Neutrality = .neutral
 	state      CellState  = .empty
+	content    string
 }
 
 struct Grid {
@@ -126,4 +141,64 @@ fn (g Grid) string(cursor Cursor) string {
 	}
 	grid_bldr.write_string('|${'_'.repeat(g.len - 2)}|')
 	return grid_bldr.str()
+}
+
+// place_ship puts a ship onto the grid in the specified location.
+fn (mut g Grid) place_ship(typ CellState, size int, pos Pos, o Orientation) ! {
+	ships := [CellState.carrier, .battleship, .cruiser, .submarine, .destroyer]
+	if typ !in ships {
+		return error('Invalid cell state for ship placement: ${typ}')
+	}
+	match o {
+		.vertical {
+			if pos.y <= size {
+				for y in pos.y .. (pos.y + size) {
+					if g.grid[y][pos.x].state in ships {
+						return error('Grid space occupied.')
+					}
+				}
+				for y in pos.y .. (pos.y + size) {
+					g.grid[y][pos.x] = Cell{
+						state: typ
+					}
+				}
+			} else {
+				for y in (pos.y - size) .. pos.y {
+					if g.grid[y][pos.x].state in ships {
+						return error('Grid space occupied.')
+					}
+				}
+				for y in (pos.y - size) .. pos.y {
+					g.grid[y][pos.x] = Cell{
+						state: typ
+					}
+				}
+			}
+		}
+		.horizontal {
+			if pos.x <= size {
+				for x in pos.x .. (pos.x + size) {
+					if g.grid[pos.y][x].state in ships {
+						return error('Grid space occupied.')
+					}
+				}
+				for x in pos.x .. (pos.x + size) {
+					g.grid[pos.y][x] = Cell{
+						state: typ
+					}
+				}
+			} else {
+				for x in (pos.x - size) .. pos.x {
+					if g.grid[pos.y][x].state in ships {
+						return error('Grid space occupied.')
+					}
+				}
+				for x in (pos.x - size) .. pos.x {
+					g.grid[pos.y][x] = Cell{
+						state: typ
+					}
+				}
+			}
+		}
+	}
 }
