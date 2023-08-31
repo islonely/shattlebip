@@ -1,11 +1,13 @@
-struct Cursor {
+module core
+
+pub struct Cursor {
 	Pos
-mut:
+__global:
 	selected Pos   = Pos.null()
 	history  []Pos = []Pos{cap: 200}
 }
 
-fn (c Cursor) val() string {
+pub fn (c Cursor) val() string {
 	col := c.x.str()
 	row := match c.y {
 		0 { 'A' }
@@ -24,22 +26,22 @@ fn (c Cursor) val() string {
 }
 
 [inline]
-fn (mut c Cursor) nullify() {
+pub fn (mut c Cursor) nullify() {
 	c.history << c.selected
 	c.selected = Pos.null()
 }
 
 [inline]
-fn (c Cursor) has_selected() bool {
+pub fn (c Cursor) has_selected() bool {
 	return !c.selected.is_null()
 }
 
 [inline]
-fn (c Cursor) last() Pos {
+pub fn (c Cursor) last() Pos {
 	return c.history.last()
 }
 
-fn (mut c Cursor) select_pos() {
+pub fn (mut c Cursor) select_pos() {
 	c.history << c.selected
 	c.selected = c.Pos
 }

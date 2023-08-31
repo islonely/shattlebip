@@ -1,13 +1,7 @@
+module main
+
 import strings
 import term
-
-const (
-	clr_default = Color{
-		r: 255
-		g: 255
-		b: 255
-	}
-)
 
 enum CheckboxState {
 	disabled
@@ -80,7 +74,7 @@ fn (m Menu) draw(mut app App, x int, y int) {
 
 [inline]
 fn d(str string) string {
-	return term.rgb(clr_default.r, clr_default.g, clr_default.b, str)
+	return term.bright_white(str)
 }
 
 [inline]

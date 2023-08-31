@@ -1,8 +1,7 @@
+module core
+
 import term.ui as tui
 import rand
-import rand.seed
-import time
-import math
 
 type Color = tui.Color
 

@@ -1,3 +1,5 @@
+module main
+
 struct Banner {}
 
 fn Banner.text(str string) string {

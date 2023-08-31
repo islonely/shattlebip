@@ -1,9 +1,16 @@
+module main
+
 import term.ui as tui
 import term
-import strings
-import math
 import rand
-import time
+import net
+import islonely.hex
+import core
+
+// 1902 = letters 19 and 02
+//		= SB
+// 		= ShattleBip
+const server_host = 'localhost:1902'
 
 fn main() {
 	w, h := term.get_terminal_size()
@@ -25,7 +32,8 @@ fn main() {
 				state: .unselected
 				do: fn [mut app] () {
 					app.tui.clear()
-					app.state = .connecting_to_server
+					app.tui.reset()
+					app.state = .initiate_server_connection
 				}
 			},
 			MenuItem{
@@ -34,7 +42,7 @@ fn main() {
 			},
 			MenuItem{
 				label: 'Settings'
-				state: .unselected
+				state: .disabled
 			},
 			MenuItem{
 				label: 'Quit'
@@ -52,40 +60,8 @@ enum GameState {
 	placing_ships
 	wait_for_enemy_ship_placement
 	main_menu
-	connecting_to_server
-}
-
-enum Orientation {
-	vertical
-	horizontal
-}
-
-struct Pos {
-mut:
-	x int
-	y int
-}
-
-// null returns a `Pos` that points to outside the gridspace.
-[inline]
-fn Pos.null() Pos {
-	return Pos{-1, -1}
-}
-
-[inline]
-fn Pos.rand() Pos {
-	// vfmt off
-	return Pos{
-		rand.int_in_range(0, 9) or { panic('This should never happen.') }
-		rand.int_in_range(0, 9) or { panic('This should never happen.') }
-	}
-	// vfmt on
-}
-
-// is_null returns true if the position exists outside the gridspace.
-[inline]
-fn (pos Pos) is_null() bool {
-	return pos.x < 0 || pos.y < 0 || pos.x > 9 || pos.y > 9
+	initiate_server_connection
+	connection_established
 }
 
 struct App {
@@ -93,20 +69,22 @@ mut:
 	tui               &tui.Context = unsafe { nil }
 	width             int
 	height            int
-	colors            []Color
-	cursor            Cursor
-	state             GameState   = .main_menu
-	ship_needs_placed []CellState = [.carrier, .battleship, .cruiser, .submarine, .destroyer]
+	colors            []core.Color
+	cursor            core.Cursor
+	state             GameState        = .main_menu
+	ship_needs_placed []core.CellState = [.carrier, .battleship, .cruiser, .submarine, .destroyer]
 	ship_rotated      bool
 	menu              Menu
+	banner_text       string
+	server            ?&net.TcpConn
 
-	player Grid = Grid{
+	player core.Grid = core.Grid{
 		name: 'Player'
 		name_colorizer: fn (str string) string {
 			return term.bright_blue(str)
 		}
 	}
-	enemy Grid = Grid{
+	enemy core.Grid = core.Grid{
 		name: 'Enemy'
 		name_colorizer: fn (str string) string {
 			return term.bright_red(str)
@@ -172,6 +150,9 @@ fn event(e &tui.Event, mut app App) {
 			.space {
 				app.handle_space_press()
 			}
+			.enter {
+				app.handle_space_press()
+			}
 			else {}
 		}
 	}
@@ -183,17 +164,20 @@ fn (mut app App) handle_space_press() {
 		.placing_ships {
 			for app.ship_needs_placed.len > 0 {
 				ship := app.ship_needs_placed.pop()
-				size := ship_sizes[ship]
+				size := core.ship_sizes[ship]
 				// orientation of the ship
 				o := unsafe {
-					Orientation(rand.int_in_range(0, 2) or { panic('This should never happen.') })
+					core.Orientation(rand.int_in_range(0, 2) or {
+						panic('This should never happen.')
+					})
 				}
-				pos := Pos.rand()
+				pos := core.Pos.rand()
 				app.player.place_ship(ship, size, pos, o) or {
 					app.ship_needs_placed << ship
 					continue
 				}
 			}
+			app.banner_text = 'Waiting for openent to place ships.'
 
 			// app.state = .wait_for_enemy_ship_placement
 
@@ -237,13 +221,52 @@ fn frame(mut app App) {
 		}
 		.placing_ships {
 			player := app.player.string(app.cursor)
-			enemy := app.enemy.string(Cursor{ x: -1, y: -1 })
+			enemy := app.enemy.string(core.Cursor{ x: -1, y: -1 })
 			app.tui.draw_text(0, 0, merge_strings(player, enemy, 4, '::'))
-			app.tui.draw_text(0, 15, Banner.text('Select location for ships.'))
+			app.tui.draw_text(0, 15, Banner.text(app.banner_text))
 			app.tui.draw_text(0, 19, 'POS: ${app.cursor.val()}')
 		}
-		.connecting_to_server {
-			println('Connecting to server...')
+		.initiate_server_connection {
+			app.tui.draw_text(1, 1, 'Initiating connection to server...')
+			app.tui.flush()
+			app.server = net.dial_tcp(server_host) or {
+				println('Could not connect to server: ${err.msg()}')
+				app.tui.clear()
+				app.tui.flush()
+				app.state = .main_menu
+				return
+			}
+			app.state = .connection_established
+			app.tui.clear()
+			app.tui.reset()
+		}
+		.connection_established {
+			mut server := app.server or {
+				app.tui.draw_text(1, 1, 'Connection to server failed.')
+				app.tui.flush()
+				return
+			}
+
+			app.tui.draw_text(1, 1, 'Connection to server established.')
+			mut i := 1
+			for {
+				i++
+				line := server.read_line()
+				if line == '' {
+					break
+				}
+
+				app.tui.draw_text(1, i, '[Server] ${line}')
+				app.tui.flush()
+
+				if line == 'Paired with player. Game will start soon.\n' {
+					app.state = .placing_ships
+					app.banner_text = 'Press space to place ships.'
+					app.tui.clear()
+					return
+				}
+			}
+			app.tui.flush()
 		}
 	}
 
