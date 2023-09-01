@@ -12,6 +12,13 @@ import core
 // 		= ShattleBip
 const server_host = 'localhost:1902'
 
+// server messages
+const (
+	messages = {
+		'ships_placed': [u8(1)]
+	}
+)
+
 fn main() {
 	w, h := term.get_terminal_size()
 	mut app := &App{
@@ -75,7 +82,7 @@ mut:
 	ship_needs_placed []core.CellState = [.carrier, .battleship, .cruiser, .submarine, .destroyer]
 	ship_rotated      bool
 	menu              Menu
-	banner_text       string
+	banner_text       string = '                          SHATTLEBIP                          '
 	server            ?&net.TcpConn
 
 	player core.Grid = core.Grid{
@@ -177,7 +184,37 @@ fn (mut app App) handle_space_press() {
 					continue
 				}
 			}
+
+			mut server := app.server or {
+				app.banner_text = 'Server connection interrupted.'
+				app.state = .main_menu
+				return
+			}
+
+			// let server know we have placed ships
 			app.banner_text = 'Waiting for openent to place ships.'
+			server.write(messages['ships_placed']) or {
+				app.state = .main_menu
+				app.banner_text = 'Failed to write to server: ${err.msg()}'
+				return
+			}
+
+			// wait for other player to place ships
+			spawn fn [mut app, mut server] () {
+				mut response := []u8{len: 1}
+				server.read(mut response) or {
+					app.state = .main_menu
+					app.banner_text = 'Failed to read from server: ${err.msg()}'
+					return
+				}
+				if response != messages['ships_placed'] {
+					app.state = .main_menu
+					app.banner_text = 'Received invalid bytes from oponent; connection terminated.'
+					return
+				}
+
+				app.banner_text = 'Oponent has placed their ships.'
+			}()
 
 			// app.state = .wait_for_enemy_ship_placement
 
@@ -217,6 +254,12 @@ fn frame(mut app App) {
 	match app.state {
 		.wait_for_enemy_ship_placement {}
 		.main_menu {
+			banner := Banner.text(app.banner_text)
+			for i, line in banner.split_into_lines() {
+				x := (app.width / 2) - (line.len / 2)
+				app.tui.draw_text(x, i + 2, line)
+			}
+
 			app.menu.draw_center(mut app)
 		}
 		.placing_ships {
@@ -234,6 +277,7 @@ fn frame(mut app App) {
 				app.tui.clear()
 				app.tui.flush()
 				app.state = .main_menu
+				app.banner_text = 'Failed to connect to server.'
 				return
 			}
 			app.state = .connection_established
