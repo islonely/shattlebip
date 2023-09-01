@@ -2,8 +2,10 @@ module core
 
 import term
 import strings
+import util
 
 pub const (
+	// cell_pictograph is the icon that represents a `CellState`.
 	cell_pictograph = {
 		'carrier':    term_pastel('₪')
 		'battleship': term_pastel('₪')
@@ -14,8 +16,8 @@ pub const (
 		'hit':        term.bright_red('✛')
 		'miss':       term.white('✗')
 	}
-	cursor_color = term.bright_yellow
-	ship_sizes   = {
+	// ship_sizes is the length of each ship.
+	ship_sizes = {
 		CellState.carrier: 5
 		.battleship:       4
 		.cruiser:          3
@@ -117,7 +119,8 @@ pub fn (g Grid) string(cursor Cursor) string {
 	name_len := g.name.len + prefix.len
 	padding := if g.max_banner_len >= name_len { 0 } else { (g.max_banner_len - g.name.len) / 2 }
 	// grid_bldr.write_string(merge_strings('', '', padding, name))
-	grid_bldr.writeln(merge_strings('', '', padding, name) + '_'.repeat(g.len - name_len - 1) + ' ')
+	grid_bldr.writeln(util.merge_strings('', '', padding, name) + '_'.repeat(g.len - name_len - 1) +
+		' ')
 	grid_bldr.write_string('|    ')
 	for i in 0 .. 10 {
 		grid_bldr.write_string(' ${i}')

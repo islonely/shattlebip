@@ -8,14 +8,6 @@ import rand
 import core
 import math
 
-const messages = {
-	// 0xF used to denote all messages from the server
-	'failed_to_read':  [u8(0xF0), 0x00]
-	'failed_to_write': [u8(0xF0), 0x01]
-	'start_player':    [u8(0xF0), 0x02]
-	'end_player':      [u8(0xF0), 0x03]
-}
-
 // Server handles everything related to player connections.
 [heap]
 struct Server {
@@ -46,12 +38,14 @@ fn main() {
 	}
 }
 
+// start starts a game by responding to player ship placement status.
+// And by selecting a random player to start the game.
 fn (mut g Game) start() {
 	// Pre-game: placing ships.
 	// read bytes from player[0] and send to player[1]
 	mut buf := []u8{len: 1000, init: 0}
 	g.players[0].read(mut buf) or {
-		g.players[1].write(messages['failed_to_read']) or {
+		g.players[1].write(core.messages['server']['failed_to_read']) or {
 			println('[Server] Failed to write to player[1]: ${err.msg()}')
 			return
 		}
@@ -73,7 +67,7 @@ fn (mut g Game) start() {
 	// read bytes from player[1] and send to player[0]
 	buf = []u8{len: 1000, init: 0}
 	g.players[1].read(mut buf) or {
-		g.players[0].write(messages['failed_to_read']) or {
+		g.players[0].write(core.messages['server']['failed_to_read']) or {
 			println('[Server] Failed to write to player[1]: ${err.msg()}')
 			return
 		}
@@ -102,17 +96,17 @@ fn (mut g Game) start() {
 	// abs(0-1) = 1 or abs(1-0) = 0
 	end_player := math.abs(start_player - 1)
 	// send bytes to player letting them know who won the random chance
-	g.players[start_player].write(messages['start_player']) or {
+	g.players[start_player].write(core.messages['server']['start_player']) or {
 		println('[Server] Failed to write to player[${start_player}]: ${err.msg()}')
-		g.players[end_player].write(messages['failed_to_write']) or {
+		g.players[end_player].write(core.messages['server']['failed_to_write']) or {
 			println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
 			return
 		}
 		return
 	}
-	g.players[end_player].write(messages['end_player']) or {
+	g.players[end_player].write(core.messages['server']['end_player']) or {
 		println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
-		g.players[end_player].write(messages['failed_to_write']) or {
+		g.players[end_player].write(core.messages['server']['failed_to_write']) or {
 			println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
 			return
 		}
@@ -160,6 +154,8 @@ fn (mut server Server) handle_client(mut socket net.TcpConn) {
 	}
 }
 
+// writeln sends a line across the TCP connection without regard to
+// whether or not an error returned.
 [inline]
 fn writeln(mut con net.TcpConn, str string) {
 	con.write_string(str + '\n') or {

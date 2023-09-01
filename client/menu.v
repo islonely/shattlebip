@@ -3,6 +3,7 @@ module main
 import strings
 import term
 
+// CheckboxState is the state of the `MenuItem`.
 enum CheckboxState {
 	disabled
 	unselected
@@ -10,6 +11,7 @@ enum CheckboxState {
 	active
 }
 
+// MenuItem is an item in the `Menu`.
 struct MenuItem {
 mut:
 	label string
@@ -17,24 +19,26 @@ mut:
 	do    fn () = fn () {}
 }
 
+// str converts a `MenuItem` into a string.
 fn (mi MenuItem) str() string {
 	str := match mi.state {
 		.disabled {
 			term.dim('[ ] ${mi.label}')
 		}
 		.unselected {
-			d('[ ] ${mi.label}')
+			term.bright_white('[ ] ${mi.label}')
 		}
 		.selected {
-			d('[✓] ${mi.label}')
+			term.bright_white('[✓] ${mi.label}')
 		}
 		.active {
-			d('[*] ${mi.label}')
+			term.bright_white('[*] ${mi.label}')
 		}
 	}
 	return str
 }
 
+// Menu is a list of items that the user can select.
 struct Menu {
 mut:
 	label    string
@@ -42,16 +46,17 @@ mut:
 	selected int
 }
 
+// draw_center horizontally and vertically draws the `Menu` onto the terminal UI.
 fn (m Menu) draw_center(mut app App) {
 	mut sb := strings.new_builder(0)
 	mut longest := m.label.len
-	sb.writeln(d(m.label))
+	sb.writeln(term.bright_white(m.label))
 	for i, item in m.items {
 		if item.str().len > longest {
 			longest = item.str().len
 		}
 		if i == m.selected {
-			sb.writeln(d('[*] ${item.label}'))
+			sb.writeln(term.bright_white('[*] ${item.label}'))
 			continue
 		}
 		sb.writeln(item.str())
@@ -65,6 +70,7 @@ fn (m Menu) draw_center(mut app App) {
 	}
 }
 
+// draw draws the `Menu` at the specified location onto the terminal UI.
 fn (m Menu) draw(mut app App, x int, y int) {
 	app.tui.draw_text(x, y, m.label)
 	for i, item in m.items {
@@ -72,16 +78,14 @@ fn (m Menu) draw(mut app App, x int, y int) {
 	}
 }
 
-[inline]
-fn d(str string) string {
-	return term.bright_white(str)
-}
-
+// selected gets the currently selected `MenuItem`.
 [inline]
 fn (m Menu) selected() MenuItem {
 	return m.items[m.selected]
 }
 
+// move_down cycles down the `Menu`. It jumps to the top item if cycled
+// down on the last item.
 fn (mut m Menu) move_down() {
 	m.selected++
 	if m.selected >= m.items.len {
@@ -92,6 +96,8 @@ fn (mut m Menu) move_down() {
 	}
 }
 
+// move_up cycles up the `Menu`. It jumps to the bottom item if cycled
+// up on the last item.
 fn (mut m Menu) move_up() {
 	m.selected--
 	if m.selected < 0 {

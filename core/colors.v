@@ -3,8 +3,10 @@ module core
 import term.ui as tui
 import rand
 
+// Color contains an RGB value as `u8`.
 type Color = tui.Color
 
+// Color.hsl produces an RGB color from hue, saturation, and lightness values.
 fn Color.hsl(h f32, s f32, l f32) Color {
 	if s == 0 {
 		ll := u8(l)
@@ -24,11 +26,13 @@ fn Color.hsl(h f32, s f32, l f32) Color {
 	}
 }
 
+// Color.random generates a random `Color`.
 [inline]
 fn Color.random() Color {
 	return Color{rand.u8(), rand.u8(), rand.u8()}
 }
 
+// Color.pastel generates a random pastel `Color`.
 [inline]
 fn Color.pastel() Color {
 	// vfmt off
@@ -40,6 +44,7 @@ fn Color.pastel() Color {
 	// vfmt on
 }
 
+// hue is used to help convert HSL to RGB in `fn Color.hsl`.
 fn hue(p f32, q f32, _t f32) f32 {
 	// vfmt off
 	mut t := _t

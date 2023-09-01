@@ -6,18 +6,12 @@ import rand
 import net
 import islonely.hex
 import core
+import util
 
 // 1902 = letters 19 and 02
 //		= SB
 // 		= ShattleBip
 const server_host = 'localhost:1902'
-
-// server messages
-const (
-	messages = {
-		'ships_placed': [u8(1)]
-	}
-)
 
 fn main() {
 	w, h := term.get_terminal_size()
@@ -63,6 +57,7 @@ fn main() {
 	app.tui.run() or { panic('Failed to run app.') }
 }
 
+// GameState is the state the game is currently in.
 enum GameState {
 	placing_ships
 	wait_for_enemy_ship_placement
@@ -71,6 +66,7 @@ enum GameState {
 	connection_established
 }
 
+// App is the primary game object.
 struct App {
 mut:
 	tui               &tui.Context = unsafe { nil }
@@ -99,6 +95,7 @@ mut:
 	}
 }
 
+// event handles keypresses among other events that may occur.
 fn event(e &tui.Event, mut app App) {
 	if e.typ == .key_down && e.code == .escape {
 		exit(0)
@@ -165,6 +162,7 @@ fn event(e &tui.Event, mut app App) {
 	}
 }
 
+// handle_space_press handles the press of the space key.
 fn (mut app App) handle_space_press() {
 	app.cursor.select_pos()
 	match app.state {
@@ -193,7 +191,7 @@ fn (mut app App) handle_space_press() {
 
 			// let server know we have placed ships
 			app.banner_text = 'Waiting for openent to place ships.'
-			server.write(messages['ships_placed']) or {
+			server.write(core.messages['client']['ships_placed']) or {
 				app.state = .main_menu
 				app.banner_text = 'Failed to write to server: ${err.msg()}'
 				return
@@ -207,7 +205,7 @@ fn (mut app App) handle_space_press() {
 					app.banner_text = 'Failed to read from server: ${err.msg()}'
 					return
 				}
-				if response != messages['ships_placed'] {
+				if response != core.messages['client']['ships_placed'] {
 					app.state = .main_menu
 					app.banner_text = 'Received invalid bytes from oponent; connection terminated.'
 					return
@@ -215,30 +213,6 @@ fn (mut app App) handle_space_press() {
 
 				app.banner_text = 'Oponent has placed their ships.'
 			}()
-
-			// app.state = .wait_for_enemy_ship_placement
-
-			// something should probably be done to allow the user
-			// to place their own ships, but I can't come up with
-			// a good system right now to do that
-
-			// if !app.cursor.last().is_null() {
-			// 	size := ship_sizes[app.ship_needs_placed.last()]
-			// 	cur := app.cursor.selected
-			// 	last := app.cursor.last()
-			// 	ymin := math.min(cur.y, last.y)
-			// 	ymax := math.max(cur.y, last.y) + 1
-			// 	xmin := math.min(cur.x, last.x)
-			// 	xmax := math.max(cur.x, last.x) + 1
-			// 	for y in ymin .. ymax {
-			// 		for x in xmin .. xmax {
-			// 			app.player.grid[y][x] = Cell{.neutral, .friendly_boat}
-			// 		}
-			// 	}
-			// 	app.cursor.nullify()
-			// } else {
-			// 	app.player.grid[app.cursor.y][app.cursor.x] = Cell{.neutral, .friendly_boat}
-			// }
 		}
 		.main_menu {
 			app.menu.selected().do()
@@ -247,6 +221,7 @@ fn (mut app App) handle_space_press() {
 	}
 }
 
+// frame is what is drawn to the terminal UI each frame.
 fn frame(mut app App) {
 	app.width, app.height = term.get_terminal_size()
 	app.tui.set_cursor_position(0, 0)
@@ -265,7 +240,7 @@ fn frame(mut app App) {
 		.placing_ships {
 			player := app.player.string(app.cursor)
 			enemy := app.enemy.string(core.Cursor{ x: -1, y: -1 })
-			app.tui.draw_text(0, 0, merge_strings(player, enemy, 4, '::'))
+			app.tui.draw_text(0, 0, util.merge_strings(player, enemy, 4, '::'))
 			app.tui.draw_text(0, 15, Banner.text(app.banner_text))
 			app.tui.draw_text(0, 19, 'POS: ${app.cursor.val()}')
 		}
@@ -314,44 +289,15 @@ fn frame(mut app App) {
 		}
 	}
 
-	// m := Menu{
-	// 	label: 'Select Difficulty:'
-	// 	items: [
-	// 		MenuItem{label: 'Easy', state: .disabled},
-	// 		MenuItem{label: 'Medium'},
-	// 		MenuItem{label: 'Hard', state: .selected}
-	// 		MenuItem{label: 'Excruciating', state: .active}
-	// 	]
-	// }
-	// m.draw_center(mut app)
-
 	// app.tui.set_cursor_position(0, 0)
 	// app.tui.reset()
 	app.tui.flush()
 	// app.tui.clear()
 }
 
+// draw_text_center draws text to the screen centered on both the horizontal
+// and vertical axes.
 fn draw_text_center(mut app App, text string) {
 	str_offset := text.len / 2
 	app.tui.draw_text(app.width / 2 - str_offset, app.height / 2, text)
-}
-
-fn merge_strings(s1 string, s2 string, padding int, divider string) string {
-	mut lines1 := s1.split_into_lines()
-	mut lines2 := s2.split_into_lines()
-	if lines1.len == 0 {
-		lines1 = ['']
-	}
-	if lines2.len == 0 {
-		lines2 = ['']
-	}
-	for i := 0; i < lines1.len && i < lines2.len; i++ {
-		lines1[i] = lines1[i] + ' '.repeat(padding) + divider + ' '.repeat(padding) + lines2[i]
-	}
-	return lines1.join('\n')
-}
-
-[if debug]
-fn debug[T](x T) {
-	println(x)
 }
