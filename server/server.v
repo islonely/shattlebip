@@ -47,7 +47,6 @@ fn (mut g Game) start() {
 	g.players[0].read(mut buf) or {
 		g.players[1].write(core.messages['server']['failed_to_read']) or {
 			println('[Server] Failed to write to player[1]: ${err.msg()}')
-			return
 		}
 		println('[Server] Failed to read from player[0]: ${err.msg()}')
 		return
@@ -69,7 +68,6 @@ fn (mut g Game) start() {
 	g.players[1].read(mut buf) or {
 		g.players[0].write(core.messages['server']['failed_to_read']) or {
 			println('[Server] Failed to write to player[1]: ${err.msg()}')
-			return
 		}
 		println('[Server] Failed to read from player[0]: ${err.msg()}')
 		return
@@ -100,7 +98,6 @@ fn (mut g Game) start() {
 		println('[Server] Failed to write to player[${start_player}]: ${err.msg()}')
 		g.players[end_player].write(core.messages['server']['failed_to_write']) or {
 			println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
-			return
 		}
 		return
 	}
@@ -108,9 +105,57 @@ fn (mut g Game) start() {
 		println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
 		g.players[end_player].write(core.messages['server']['failed_to_write']) or {
 			println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
-			return
 		}
 		return
+	}
+
+	g.gameplay(start_player)
+}
+
+// gameplay is the meat and potatoes of the game of shattlebip where the
+// players take turns blasting away towards the demise of each other.
+fn (mut g Game) gameplay(index int) {
+	mut turn := index
+	for {
+		// assumes index is either 0 or 1
+		i := index
+		j := math.abs(i - 1)
+		// read message type from player
+		mut buf := []u8{len: 2}
+		g.players[i].read(mut buf) or {
+			println('[Server] Failed to read bytes from player[${i}]: ${err.msg()}')
+			g.players[j].write(core.messages['server']['failed_to_read']) or {
+				println('[Server] Failed to write bytes to player[${j}]: ${err.msg()}')
+			}
+			return
+		}
+
+		// if message type is not in known list
+		if buf !in core.messages['client'].values() {
+			g.players[j].write(core.messages['server']['invalid_bytes']) or {
+				println('[Server] Failed to write to player[${j}]: ${err.msg()}')
+			}
+			return
+		}
+
+		// write type of message to other player
+		g.players[j].write(buf) or {
+			println('[Server] Failed to write to player[${j}]: ${err.msg()}')
+			g.players[i].write(core.messages['server']['failed_to_write']) or {
+				println('[Server] Faield to write to player[${i}]: ${err.msg()}')
+			}
+			return
+		}
+		// read message contents from player
+		passthrough := g.players[i].read_line()
+		// write message contents to other player
+		g.players[j].write_string(passthrough) or {
+			println('[Server] Failed to write to player[${j}]: ${err.msg()}')
+			g.players[i].write(core.messages['server']['failed_to_write']) or {
+				println('[Server] Failed to write to player[${i}]: ${err.msg()}')
+			}
+			return
+		}
 	}
 }
 
@@ -146,6 +191,7 @@ fn (mut server Server) handle_client(mut socket net.TcpConn) {
 		g.players << foe
 		g.players << socket
 		server.queue.delete(0)
+		// server.games[g.id] = g
 
 		// server.games << game
 		writeln(mut socket, 'Paired with player. Game will start soon.')

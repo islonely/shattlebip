@@ -8,11 +8,12 @@ struct Banner {}
 // onto a terminal UI.
 fn Banner.text(str string) string {
 	len := 62
-	s := if str.len > len {
-		str[0..47] + '...'
-	} else {
-		str
-	}
+	// s := if str.len > len {
+	// 	str[0..47] + '...'
+	// } else {
+	// 	str
+	// }
+	s := str
 	// vfmt off
 	return ' ________________________________________________________________ \n' +
 		   '|                                                                |\n' +

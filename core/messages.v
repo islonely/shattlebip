@@ -8,9 +8,11 @@ pub const messages = {
 		'failed_to_write': [u8(0xF0), 0x01]
 		'start_player':    [u8(0xF0), 0x02]
 		'end_player':      [u8(0xF0), 0x03]
+		'invalid_bytes':   [u8(0xF0), 0x04]
 	}
 	'client': {
 		// 0x1 used to denote allmessages sent from a client.
-		'ships_placed': [u8(0x10), 0x01]
+		'ships_placed':    [u8(0x10), 0x01]
+		'cursor_position': [u8(0x10), 0x02]
 	}
 }
