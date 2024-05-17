@@ -1,7 +1,7 @@
 module main
 
 // Banner is used to like a namespace.
-[noinit]
+@[noinit]
 struct Banner {}
 
 // Banner.text returns a string inside of a banner for output

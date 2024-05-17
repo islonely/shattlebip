@@ -4,27 +4,25 @@ import term
 import strings
 import util
 
-pub const (
-	// cell_pictograph is the icon that represents a `CellState`.
-	cell_pictograph = {
-		'carrier':    term_pastel('₪')
-		'battleship': term_pastel('₪')
-		'cruiser':    term_pastel('₪')
-		'submarine':  term_pastel('₪')
-		'destroyer':  term_pastel('₪')
-		'empty':      term.bright_blue('_')
-		'hit':        term.bright_red('✛')
-		'miss':       term.white('✗')
-	}
-	// ship_sizes is the length of each ship.
-	ship_sizes = {
-		CellState.carrier: 5
-		.battleship:       4
-		.cruiser:          3
-		.submarine:        3
-		.destroyer:        2
-	}
-)
+// cell_pictograph is the icon that represents a `CellState`.
+pub const cell_pictograph = {
+	'carrier':    term_pastel('₪')
+	'battleship': term_pastel('₪')
+	'cruiser':    term_pastel('₪')
+	'submarine':  term_pastel('₪')
+	'destroyer':  term_pastel('₪')
+	'empty':      term.bright_blue('_')
+	'hit':        term.bright_red('✛')
+	'miss':       term.white('✗')
+}
+// ship_sizes is the length of each ship.
+pub const ship_sizes = {
+	CellState.carrier: 5
+	.battleship:       4
+	.cruiser:          3
+	.submarine:        3
+	.destroyer:        2
+}
 
 // Orientation is the direction a ship is facing.
 pub enum Orientation {
@@ -55,7 +53,7 @@ pub enum CellState {
 }
 
 // term_pastel returns a string with a randomly generated pastel color.
-[inline]
+@[inline]
 fn term_pastel(str string) string {
 	p := Color.pastel()
 	return term.rgb(p.r, p.g, p.g, str)

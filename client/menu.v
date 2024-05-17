@@ -79,7 +79,7 @@ fn (m Menu) draw(mut app App, x int, y int) {
 }
 
 // selected gets the currently selected `MenuItem`.
-[inline]
+@[inline]
 fn (m Menu) selected() MenuItem {
 	return m.items[m.selected]
 }

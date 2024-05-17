@@ -27,13 +27,13 @@ fn Color.hsl(h f32, s f32, l f32) Color {
 }
 
 // Color.random generates a random `Color`.
-[inline]
+@[inline]
 fn Color.random() Color {
 	return Color{rand.u8(), rand.u8(), rand.u8()}
 }
 
 // Color.pastel generates a random pastel `Color`.
-[inline]
+@[inline]
 fn Color.pastel() Color {
 	// vfmt off
 	return Color.hsl(

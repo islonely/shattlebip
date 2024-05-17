@@ -2,10 +2,8 @@ module core
 
 import term
 
-pub const (
-	// colorizer function i.e., `fn cursor_color(string) string`
-	cursor_color = term.bright_yellow
-)
+// colorizer function i.e., `fn cursor_color(string) string`
+pub const cursor_color = term.bright_yellow
 
 // Cursor is a position on the `Grid` which the user has
 // currently selected.
@@ -36,7 +34,7 @@ pub fn (c Cursor) val() string {
 }
 
 // nullify sets the `Cursor.selected` field to `fn Pos.null`.
-[inline]
+@[inline]
 pub fn (mut c Cursor) nullify() {
 	c.history << c.selected
 	c.selected = Pos.null()
@@ -44,13 +42,13 @@ pub fn (mut c Cursor) nullify() {
 
 // has_selected returns whether or not a position on the `Grid` has
 // been selected.
-[inline]
+@[inline]
 pub fn (c Cursor) has_selected() bool {
 	return !c.selected.is_null()
 }
 
 // last returns the previous value selected.
-[inline]
+@[inline]
 pub fn (c Cursor) last() Pos {
 	return c.history.last()
 }

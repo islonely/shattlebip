@@ -7,8 +7,6 @@ import net
 import islonely.hex
 import core
 import util
-import time
-import os
 
 // 1902 = letters 19 and 02
 //		= SB

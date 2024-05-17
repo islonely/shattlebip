@@ -3,13 +3,12 @@ module main
 import io
 import net
 import term
-import islonely.hex
 import rand
 import core
 import math
 
 // Server handles everything related to player connections.
-[heap]
+@[heap]
 struct Server {
 mut:
 	listener net.TcpListener
@@ -18,7 +17,7 @@ mut:
 }
 
 // Game is the game that two players are currently playing.
-[heap]
+@[heap]
 struct Game {
 	id string
 mut:
@@ -115,7 +114,7 @@ fn (mut g Game) start() {
 // gameplay is the meat and potatoes of the game of shattlebip where the
 // players take turns blasting away towards the demise of each other.
 fn (mut g Game) gameplay(index int) {
-	mut turn := index
+	// mut turn := index
 	for {
 		// assumes index is either 0 or 1
 		i := index
@@ -160,7 +159,7 @@ fn (mut g Game) gameplay(index int) {
 }
 
 // close_game closes all the connections to players in a game.
-[inline]
+@[inline]
 fn (mut g Game) close_game() {
 	for mut player in g.players {
 		player.close() or {
@@ -202,7 +201,7 @@ fn (mut server Server) handle_client(mut socket net.TcpConn) {
 
 // writeln sends a line across the TCP connection without regard to
 // whether or not an error returned.
-[inline]
+@[inline]
 fn writeln(mut con net.TcpConn, str string) {
 	con.write_string(str + '\n') or {
 		println(term.bright_red('[Server]') + 'writeln: ${err.msg()}')
