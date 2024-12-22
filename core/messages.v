@@ -11,8 +11,9 @@ pub const messages = {
 		'invalid_bytes':   [u8(0xF0), 0x04]
 	}
 	'client': {
-		// 0x1 used to denote allmessages sent from a client.
+		// 0x1 used to denote all messages sent from a client.
 		'ships_placed':    [u8(0x10), 0x01]
 		'cursor_position': [u8(0x10), 0x02]
+		'attack':          [u8(0x10), 0x03]
 	}
 }

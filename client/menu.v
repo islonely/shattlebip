@@ -16,7 +16,7 @@ struct MenuItem {
 mut:
 	label string
 	state CheckboxState = .unselected
-	do    fn () = fn () {}
+	do    fn ()         = fn () {}
 }
 
 // str converts a `MenuItem` into a string.

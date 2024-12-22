@@ -12,7 +12,7 @@ import math
 struct Server {
 mut:
 	listener net.TcpListener
-	queue    []&net.TcpConn = []&net.TcpConn{cap: 10}
+	queue    []&net.TcpConn = []&net.TcpConn{}
 	games    map[string]&Game
 }
 
@@ -21,8 +21,8 @@ mut:
 struct Game {
 	id string
 mut:
-	players []&net.TcpConn = []&net.TcpConn{cap: 2}
-	grids   []core.Grid    = []core.Grid{cap: 2}
+	players []&net.TcpConn = []&net.TcpConn{}
+	grids   []core.Grid    = []core.Grid{}
 }
 
 fn main() {
@@ -31,6 +31,9 @@ fn main() {
 	}
 	laddr := server.listener.addr()!
 	eprintln('Listen on ${laddr} ...')
+	defer {
+		server.listener.close() or { eprintln('Failed to close TCP listener:\n${err.msg()}.') }
+	}
 	for {
 		mut socket := server.listener.accept()!
 		spawn server.handle_client(mut socket)
@@ -145,10 +148,16 @@ fn (mut g Game) gameplay(index int) {
 			}
 			return
 		}
-		// read message contents from player
-		passthrough := g.players[i].read_line()
-		// write message contents to other player
-		g.players[j].write_string(passthrough) or {
+		// passthrough message to other player
+		g.players[i].read(mut buf) or {
+			println('[Server] Failed to read bytes from player[${i}]: ${err.msg()}')
+			g.players[j].write(core.messages['server']['failed_to_read']) or {
+				println('[Server] Failed to write bytes to player[${j}]: ${err.msg()}')
+			}
+			return
+		}
+		println('[Client ${i}] "${buf}"')
+		g.players[j].write(buf) or {
 			println('[Server] Failed to write to player[${j}]: ${err.msg()}')
 			g.players[i].write(core.messages['server']['failed_to_write']) or {
 				println('[Server] Failed to write to player[${i}]: ${err.msg()}')
@@ -190,6 +199,10 @@ fn (mut server Server) handle_client(mut socket net.TcpConn) {
 		g.players << foe
 		g.players << socket
 		server.queue.delete(0)
+
+		defer {
+			g.close_game()
+		}
 		// server.games[g.id] = g
 
 		// server.games << game

@@ -4,7 +4,6 @@ import term.ui as tui
 import term
 import rand
 import net
-import islonely.hex
 import core
 import util
 
@@ -16,13 +15,13 @@ const server_host = 'localhost:1902'
 fn main() {
 	w, h := term.get_terminal_size()
 	mut app := &App{
-		width: w
+		width:  w
 		height: h
 	}
 	app.tui = tui.init(
-		user_data: app
-		event_fn: event
-		frame_fn: frame
+		user_data:   app
+		event_fn:    event
+		frame_fn:    frame
 		hide_cursor: true
 	)
 	app.menu = Menu{
@@ -31,7 +30,7 @@ fn main() {
 			MenuItem{
 				label: 'Online Play'
 				state: .unselected
-				do: fn [mut app] () {
+				do:    fn [mut app] () {
 					app.tui.clear()
 					app.tui.reset()
 					app.state = .initiate_server_connection
@@ -48,7 +47,7 @@ fn main() {
 			MenuItem{
 				label: 'Quit'
 				state: .unselected
-				do: fn () {
+				do:    fn () {
 					exit(1)
 				}
 			},
@@ -76,6 +75,7 @@ mut:
 	height               int
 	colors               []core.Color
 	cursor               core.Cursor
+	enemy_cursor         core.Cursor
 	state                GameState        = .main_menu
 	ship_needs_placed    []core.CellState = [.carrier, .battleship, .cruiser, .submarine, .destroyer]
 	ship_rotated         bool
@@ -85,13 +85,13 @@ mut:
 	waiting_for_response thread
 
 	player core.Grid = core.Grid{
-		name: 'Player'
+		name:           'Player'
 		name_colorizer: fn (str string) string {
 			return term.bright_blue(str)
 		}
 	}
-	enemy core.Grid = core.Grid{
-		name: 'Enemy'
+	enemy  core.Grid = core.Grid{
+		name:           'Enemy'
 		name_colorizer: fn (str string) string {
 			return term.bright_red(str)
 		}
@@ -114,15 +114,10 @@ fn (mut app App) tcp_write_cursor() {
 		return
 	}
 
-	server.write(core.messages['client']['cursor_position']) or {
-		app.switch_state(.main_menu, 'Failed to write to server: ${err.msg()}')
-		return
-	}
-	bytes := hex.encode_struct(app.cursor) or {
-		app.switch_state(.main_menu, 'Failed to encode Cursor: ${err.msg()}')
-		return
-	}
-	server.write_string(bytes.bytestr()) or {
+	mut cursor_pos_bytes := []u8{cap: 4}
+	cursor_pos_bytes << core.messages['client']['cursor_position']
+	cursor_pos_bytes << [u8(app.cursor.x), u8(app.cursor.y)]
+	server.write(cursor_pos_bytes) or {
 		app.switch_state(.main_menu, 'Failed to write to server: ${err.msg()}')
 		return
 	}
@@ -166,7 +161,7 @@ fn event(e &tui.Event, mut app App) {
 						app.menu.move_up()
 					}
 					.my_turn {
-						if _likely_(app.cursor.y < 9) {
+						if _likely_(app.cursor.y > 0) {
 							app.cursor.y--
 						}
 						app.tcp_write_cursor()
@@ -183,7 +178,7 @@ fn event(e &tui.Event, mut app App) {
 					}
 					.main_menu {}
 					.my_turn {
-						if _likely_(app.cursor.y < 9) {
+						if _likely_(app.cursor.x > 0) {
 							app.cursor.x--
 						}
 						app.tcp_write_cursor()
@@ -200,7 +195,7 @@ fn event(e &tui.Event, mut app App) {
 					}
 					.main_menu {}
 					.my_turn {
-						if _likely_(app.cursor.y < 9) {
+						if _likely_(app.cursor.x < 9) {
 							app.cursor.x++
 						}
 						app.tcp_write_cursor()
@@ -260,12 +255,12 @@ fn (mut app App) handle_space_press() {
 					return
 				}
 				if response != core.messages['client']['ships_placed'] {
-					app.switch_state(.main_menu, 'Received invalid bytes from oponent; connection terminated.')
+					app.switch_state(.main_menu, 'Received invalid bytes from opponent; connection terminated.')
 					server.close() or {}
 					return
 				}
 
-				app.banner_text = 'Oponent has placed their ships.'
+				app.banner_text = 'Opponent has placed their ships.'
 
 				// receive bytes to determine if I am start or end player
 				response = []u8{len: 2}
@@ -287,32 +282,6 @@ fn (mut app App) handle_space_press() {
 						app.state = .their_turn
 						app.banner_text = "It's their turn. Please wait for your demise."
 						app.tui.clear()
-						app.waiting_for_response = spawn fn [mut app, mut server] () {
-							for {
-								mut buf := []u8{len: 2}
-								server.read(mut buf) or {
-									app.switch_state(.main_menu, 'Failed to read from server: ${err.msg()}')
-									return
-								}
-								match buf {
-									core.messages['client']['cursor_position'] {
-										hex_cursor := server.read_line().bytes()
-										if hex_cursor.len == 0 {
-											app.switch_state(.main_menu, 'Invalid bytes after cursor prefix: ${hex_cursor}')
-											return
-										}
-										app.cursor = hex.decode_struct[core.Cursor](hex_cursor) or {
-											app.switch_state(.main_menu, 'Invalid bytes in cursor hex: ${hex_cursor}')
-											return
-										}
-									}
-									else {
-										app.switch_state(.main_menu, 'Invalid bytes received from server: ${buf}')
-										return
-									}
-								}
-							}
-						}()
 					}
 					else {
 						app.state = .main_menu
@@ -322,6 +291,19 @@ fn (mut app App) handle_space_press() {
 					}
 				}
 			}()
+		}
+		.my_turn {
+			app.banner_text = 'Selected ${app.cursor.val()}. Sending to server...'
+			mut server := app.server or {
+				app.switch_state(.main_menu, 'Server connection interrupted.')
+				return
+			}
+
+			app.tcp_write_cursor()
+			server.write(core.messages['client']['attack']) or {
+				app.switch_state(.main_menu, 'Failed to write to server: ${err.msg()}')
+				return
+			}
 		}
 		.main_menu {
 			app.menu.selected().do()
@@ -391,9 +373,33 @@ fn frame(mut app App) {
 					app.state = .placing_ships
 					app.banner_text = 'Press space to place ships.'
 					app.tui.clear()
-					return
+					break
 				}
 			}
+			app.waiting_for_response = spawn fn [mut app, mut server] () {
+				for {
+					mut buf := []u8{len: 2}
+					server.read(mut buf) or {
+						app.switch_state(.main_menu, 'Failed to read from server: ${err.msg()}')
+						return
+					}
+					match buf {
+						core.messages['client']['cursor_position'] {
+							mut pos_bytes := []u8{len: 2}
+							server.read(mut pos_bytes) or {
+								app.switch_state(.main_menu, 'FIled to read from server: ${err.msg()}')
+								return
+							}
+							app.cursor.x = pos_bytes[0]
+							app.cursor.y = pos_bytes[1]
+						}
+						else {
+							app.switch_state(.main_menu, 'Invalid bytes received from server: ${buf}')
+							return
+						}
+					}
+				}
+			}()
 			app.tui.flush()
 		}
 		.my_turn {
@@ -406,7 +412,7 @@ fn frame(mut app App) {
 		}
 		.their_turn {
 			player := app.player.string(app.cursor)
-			enemy := app.enemy.string(core.Cursor{ x: -1, y: -1 })
+			enemy := app.enemy.string(app.enemy_cursor)
 			app.tui.draw_text(0, 0, util.merge_strings(player, enemy, 4, '::'))
 			app.tui.draw_text(0, 15, Banner.text(app.banner_text))
 			app.tui.draw_text(0, 19, 'POS: ${app.cursor.val()}')

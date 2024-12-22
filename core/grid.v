@@ -75,8 +75,8 @@ mut:
 // Grid is the gameboard through which the players view the game world.
 pub struct Grid {
 pub:
-	max_banner_len int = 14
-	len            int = 28
+	max_banner_len int                = 14
+	len            int                = 28
 	name_colorizer fn (string) string = fn (str string) string {
 		return term.bright_white(str)
 	}
@@ -132,24 +132,23 @@ pub fn (g Grid) string(cursor Cursor) string {
 			if y == cursor.y && x == cursor.x && cell.state == .empty {
 				grid_bldr.write_string(cursor_color('|') + cursor_color('_'))
 			} else if y == cursor.y && x in [cursor.x, cursor.x + 1] {
-				grid_bldr.write_string(cursor_color('|') + core.cell_pictograph[cell.state.str()])
+				grid_bldr.write_string(cursor_color('|') + cell_pictograph[cell.state.str()])
 			}
 			// Cell.neutrality is .good
 			else if cell.neutrality == .good {
-				grid_bldr.write_string(good_color('|${core.cell_pictograph[cell.state.str()]}'))
+				grid_bldr.write_string(good_color('|${cell_pictograph[cell.state.str()]}'))
 			} else if last_cell.neutrality == .good {
-				grid_bldr.write_string(good_color('|') + core.cell_pictograph[cell.state.str()])
+				grid_bldr.write_string(good_color('|') + cell_pictograph[cell.state.str()])
 			}
 			// Cell.neutrality is .bad
 			else if cell.neutrality == .bad {
-				grid_bldr.write_string(good_color('|${core.cell_pictograph[cell.state.str()]}'))
+				grid_bldr.write_string(good_color('|${cell_pictograph[cell.state.str()]}'))
 			} else if last_cell.neutrality == .bad {
-				grid_bldr.write_string(term.bg_red('|') + core.cell_pictograph[cell.state.str()])
+				grid_bldr.write_string(term.bg_red('|') + cell_pictograph[cell.state.str()])
 			}
 			// normal
 			else {
-				grid_bldr.write_string(term.bright_blue('|') +
-					core.cell_pictograph[cell.state.str()])
+				grid_bldr.write_string(term.bright_blue('|') + cell_pictograph[cell.state.str()])
 			}
 		}
 		if y == cursor.y && cursor.x == 9 {
