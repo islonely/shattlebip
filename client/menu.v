@@ -47,7 +47,7 @@ mut:
 }
 
 // draw_center horizontally and vertically draws the `Menu` onto the terminal UI.
-fn (m Menu) draw_center(mut app App) {
+fn (m Menu) draw_center(mut game Game) {
 	mut sb := strings.new_builder(0)
 	mut longest := m.label.len
 	sb.writeln(term.bright_white(m.label))
@@ -62,19 +62,19 @@ fn (m Menu) draw_center(mut app App) {
 		sb.writeln(item.str())
 	}
 	str := sb.str().split_into_lines()
-	x := (app.width / 2) - (longest / 4)
-	y := (app.height / 2) - (str.len / 2)
+	x := (game.width / 2) - (longest / 4)
+	y := (game.height / 2) - (str.len / 2)
 
 	for i, line in str {
-		app.tui.draw_text(x, y + i, line)
+		game.tui.draw_text(x, y + i, line)
 	}
 }
 
 // draw draws the `Menu` at the specified location onto the terminal UI.
-fn (m Menu) draw(mut app App, x int, y int) {
-	app.tui.draw_text(x, y, m.label)
+fn (m Menu) draw(mut game Game, x int, y int) {
+	game.tui.draw_text(x, y, m.label)
 	for i, item in m.items {
-		app.tui.draw_text(x, y + i + 1, item.str())
+		game.tui.draw_text(x, y + i + 1, item.str())
 	}
 }
 

@@ -20,8 +20,8 @@ pub fn Pos.null() Pos {
 pub fn Pos.rand() Pos {
 	// vfmt off
 	return Pos{
-		rand.int_in_range(0, 9) or { panic('This should never happen.') }
-		rand.int_in_range(0, 9) or { panic('This should never happen.') }
+		rand.int_in_range(0, 9) or { panic('This should never hgameen.') }
+		rand.int_in_range(0, 9) or { panic('This should never hgameen.') }
 	}
 	// vfmt on
 }

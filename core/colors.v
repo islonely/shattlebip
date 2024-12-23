@@ -38,8 +38,8 @@ fn Color.pastel() Color {
 	// vfmt off
 	return Color.hsl(
 		rand.f32(),
-		rand.f32_in_range(0.25, 0.95) or { panic('fn Color.pastel(): this should never happen.') },
-		0.75 // rand.f32_in_range(0.75, 0.9) or { panic('fn Color.pasetl(): this should never happen.') }
+		rand.f32_in_range(0.25, 0.95) or { panic('fn Color.pastel(): this should never hgameen.') },
+		0.75 // rand.f32_in_range(0.75, 0.9) or { panic('fn Color.pasetl(): this should never hgameen.') }
 	)
 	// vfmt on
 }

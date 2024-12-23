@@ -82,8 +82,9 @@ pub:
 	}
 __global:
 	// name should be 17 characters or less
-	name string
-	grid [10][10]Cell = [10][10]Cell{init: [10]Cell{}}
+	name   string
+	grid   [10][10]Cell = [10][10]Cell{init: [10]Cell{}}
+	cursor Cursor
 }
 
 // neutralize sets all the `Cell`s in the `Grid` to `Neutrality.neutral`.
@@ -162,6 +163,7 @@ pub fn (g Grid) string(cursor Cursor) string {
 }
 
 // place_ship puts a ship onto the grid in the specified location.
+// Error returned upon invalid ship placement.
 pub fn (mut g Grid) place_ship(typ CellState, size int, pos Pos, o Orientation) ! {
 	ships := [CellState.carrier, .battleship, .cruiser, .submarine, .destroyer]
 	if typ !in ships {

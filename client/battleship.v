@@ -14,26 +14,24 @@ const server_host = 'localhost:1902'
 
 fn main() {
 	w, h := term.get_terminal_size()
-	mut app := &App{
+	mut game := &Game{
 		width:  w
 		height: h
 	}
-	app.tui = tui.init(
-		user_data:   app
+	game.tui = tui.init(
+		user_data:   game
 		event_fn:    event
 		frame_fn:    frame
 		hide_cursor: true
 	)
-	app.menu = Menu{
+	game.menu = Menu{
 		label: ''
 		items: [
 			MenuItem{
 				label: 'Online Play'
 				state: .unselected
-				do:    fn [mut app] () {
-					app.tui.clear()
-					app.tui.reset()
-					app.state = .initiate_server_connection
+				do:    fn [mut game] () {
+					spawn game.initiate_server_connection()
 				}
 			},
 			MenuItem{
@@ -53,7 +51,7 @@ fn main() {
 			},
 		]
 	}
-	app.tui.run() or { panic('Failed to run app.') }
+	game.tui.run() or { panic('Failed to run game.') }
 }
 
 // GameState is the state the game is currently in.
@@ -61,36 +59,35 @@ enum GameState {
 	placing_ships
 	wait_for_enemy_ship_placement
 	main_menu
-	initiate_server_connection
 	connection_established
 	my_turn
 	their_turn
 }
 
-// App is the primary game object.
-struct App {
+// Game is the primary game object.
+struct Game {
 mut:
-	tui                  &tui.Context = unsafe { nil }
-	width                int
-	height               int
-	colors               []core.Color
-	cursor               core.Cursor
-	enemy_cursor         core.Cursor
-	state                GameState        = .main_menu
-	ship_needs_placed    []core.CellState = [.carrier, .battleship, .cruiser, .submarine, .destroyer]
-	ship_rotated         bool
-	menu                 Menu
-	banner_text          string = '                          SHATTLEBIP                          '
-	server               ?&net.TcpConn
-	waiting_for_response thread
+	tui                 &tui.Context = unsafe { nil }
+	width               int
+	height              int
+	colors              []core.Color
+	state               GameState        = .main_menu
+	state_channel       chan GameState   = chan GameState{cap: 100}
+	ship_needs_placed   []core.CellState = [.carrier, .battleship, .cruiser, .submarine, .destroyer]
+	ship_rotated        bool
+	menu                Menu
+	banner_text         string      = '                          SHATTLEBIP                          '
+	banner_text_channel chan string = chan string{cap: 100}
+	server              ?&net.TcpConn
+	network_thread      thread
 
-	player core.Grid = core.Grid{
+	player_grid core.Grid = core.Grid{
 		name:           'Player'
 		name_colorizer: fn (str string) string {
 			return term.bright_blue(str)
 		}
 	}
-	enemy  core.Grid = core.Grid{
+	enemy_grid  core.Grid = core.Grid{
 		name:           'Enemy'
 		name_colorizer: fn (str string) string {
 			return term.bright_red(str)
@@ -98,337 +95,227 @@ mut:
 	}
 }
 
-// switch_state sets the game to the specified state. And sets the banner text
-// to the specified text. As well as flushed and clears the terminal UI.
-fn (mut app App) switch_state(state GameState, banner_text string) {
-	app.tui.flush()
-	app.tui.clear()
-	app.state = state
-	app.banner_text = banner_text
+// initiate_server_connection tries to connect to the server.
+fn (mut game Game) initiate_server_connection() {
+	game.banner_text_channel <- 'Initiating server connection.'
+	game.server = net.dial_tcp(server_host) or {
+		game.state_channel <- GameState.main_menu
+		game.banner_text_channel <- 'Failed to connect to server.'
+		return
+	}
+	game.state_channel <- GameState.connection_established
+	game.banner_text_channel <- 'Connected to server.'
 }
 
-// tcp_write_cursor sends the App.cursor field encoded in hexadecimal to the server.
-fn (mut app App) tcp_write_cursor() {
-	mut server := app.server or {
-		app.switch_state(.main_menu, 'Server connection interrupted')
+// draw_banner converts the Game.banner_text variable to the correct text
+// and draws it to the screen.
+fn (mut game Game) draw_banner() {
+	banner := Banner.text(game.banner_text)
+	for i, line in banner.split_into_lines() {
+		x := (game.width / 2) - (line.len / 2)
+		game.tui.draw_text(x, i + 2, line)
+	}
+}
+
+// switch_state sets the game to the specified state. And sets the banner text
+// to the specified text. As well as flushed and clears the terminal UI.
+fn (mut game Game) switch_state(state GameState, banner_text string) {
+	game.tui.flush()
+	game.tui.clear()
+	game.state = state
+	game.banner_text = banner_text
+}
+
+// tcp_write_cursor sends the Game.cursor field encoded in hexadecimal to the server.
+fn (mut game Game) tcp_write_cursor() {
+	mut server := game.server or {
+		game.switch_state(.main_menu, 'Server connection interrupted')
 		return
 	}
 
 	mut cursor_pos_bytes := []u8{cap: 4}
 	cursor_pos_bytes << core.messages['client']['cursor_position']
-	cursor_pos_bytes << [u8(app.cursor.x), u8(app.cursor.y)]
+	cursor_pos_bytes << [u8(game.player_grid.cursor.x), u8(game.player_grid.cursor.y)]
 	server.write(cursor_pos_bytes) or {
-		app.switch_state(.main_menu, 'Failed to write to server: ${err.msg()}')
+		game.switch_state(.main_menu, 'Failed to write to server: ${err.msg()}')
 		return
 	}
 }
 
-// event handles keypresses among other events that may occur.
-fn event(e &tui.Event, mut app App) {
+// event passes an event to the respective function to be handled
+// based on the current game state.
+fn event(e &tui.Event, mut game Game) {
 	if e.typ == .key_down && e.code == .escape {
 		exit(0)
 	}
 
-	if e.typ == .key_down {
-		match e.code {
-			.down {
-				match app.state {
-					.placing_ships {
-						if _likely_(app.cursor.y < 9) {
-							app.cursor.y++
-						}
-					}
-					.main_menu {
-						app.menu.move_down()
-					}
-					.my_turn {
-						if _likely_(app.cursor.y < 9) {
-							app.cursor.y++
-						}
-						app.tcp_write_cursor()
-					}
-					else {}
-				}
-			}
-			.up {
-				match app.state {
-					.placing_ships {
-						if _likely_(app.cursor.y > 0) {
-							app.cursor.y--
-						}
-					}
-					.main_menu {
-						app.menu.move_up()
-					}
-					.my_turn {
-						if _likely_(app.cursor.y > 0) {
-							app.cursor.y--
-						}
-						app.tcp_write_cursor()
-					}
-					else {}
-				}
-			}
-			.left {
-				match app.state {
-					.placing_ships {
-						if _likely_(app.cursor.x > 0) {
-							app.cursor.x--
-						}
-					}
-					.main_menu {}
-					.my_turn {
-						if _likely_(app.cursor.x > 0) {
-							app.cursor.x--
-						}
-						app.tcp_write_cursor()
-					}
-					else {}
-				}
-			}
-			.right {
-				match app.state {
-					.placing_ships {
-						if _likely_(app.cursor.x < 9) {
-							app.cursor.x++
-						}
-					}
-					.main_menu {}
-					.my_turn {
-						if _likely_(app.cursor.x < 9) {
-							app.cursor.x++
-						}
-						app.tcp_write_cursor()
-					}
-					else {}
-				}
-			}
-			.space {
-				app.handle_space_press()
-			}
-			.enter {
-				app.handle_space_press()
-			}
-			else {}
+	match game.state {
+		.main_menu {
+			game.main_menu_event(e)
+		}
+		.my_turn {
+			game.my_turn_event(e)
+		}
+		.placing_ships {
+			game.placing_ships_event(e)
+		}
+		else {
+			game.banner_text = 'No keybinds setup for state: ${game.state}'
 		}
 	}
 }
 
-// handle_space_press handles the press of the space key.
-fn (mut app App) handle_space_press() {
-	app.cursor.select_pos()
-	match app.state {
-		.placing_ships {
-			for app.ship_needs_placed.len > 0 {
-				ship := app.ship_needs_placed.pop()
-				size := core.ship_sizes[ship]
-				// orientation of the ship
-				o := unsafe {
-					core.Orientation(rand.int_in_range(0, 2) or {
-						panic('This should never happen.')
-					})
-				}
-				pos := core.Pos.rand()
-				app.player.place_ship(ship, size, pos, o) or {
-					app.ship_needs_placed << ship
-					continue
-				}
-			}
-
-			mut server := app.server or {
-				app.switch_state(.main_menu, 'Server connection interrupted.')
-				return
-			}
-
-			// let server know we have placed ships
-			app.banner_text = 'Waiting for openent to place ships.'
-			server.write(core.messages['client']['ships_placed']) or {
-				app.switch_state(.main_menu, 'Failed to write to server: ${err.msg()}')
-				return
-			}
-
-			// wait for other player to place ships
-			spawn fn [mut app, mut server] () {
-				mut response := []u8{len: 2}
-				server.read(mut response) or {
-					app.switch_state(.main_menu, 'Failed to read from server: ${err.msg()}')
-					return
-				}
-				if response != core.messages['client']['ships_placed'] {
-					app.switch_state(.main_menu, 'Received invalid bytes from opponent; connection terminated.')
-					server.close() or {}
-					return
-				}
-
-				app.banner_text = 'Opponent has placed their ships.'
-
-				// receive bytes to determine if I am start or end player
-				response = []u8{len: 2}
-				server.read(mut response) or {
-					app.state = .main_menu
-					app.banner_text = 'Failed to read from server: ${err.msg()}'
-					app.tui.clear()
-					return
-				}
-				match response {
-					core.messages['server']['start_player'] {
-						app.state = .my_turn
-						app.banner_text = "It's your turn! Select a location to obliterate."
-						app.tui.clear()
-						app.tcp_write_cursor()
-						return
-					}
-					core.messages['server']['end_player'] {
-						app.state = .their_turn
-						app.banner_text = "It's their turn. Please wait for your demise."
-						app.tui.clear()
-					}
-					else {
-						app.state = .main_menu
-						app.banner_text = 'Received invalid bytes from server; connection terminated.'
-						app.tui.clear()
-						return
-					}
-				}
-			}()
-		}
-		.my_turn {
-			app.banner_text = 'Selected ${app.cursor.val()}. Sending to server...'
-			mut server := app.server or {
-				app.switch_state(.main_menu, 'Server connection interrupted.')
-				return
-			}
-
-			app.tcp_write_cursor()
-			server.write(core.messages['client']['attack']) or {
-				app.switch_state(.main_menu, 'Failed to write to server: ${err.msg()}')
-				return
+// main_menu_event handles mouse, keyboard, and window events that
+// hgameen during the .main_menu state.
+fn (mut game Game) main_menu_event(event &tui.Event) {
+	match event.typ {
+		.key_down {
+			match event.code {
+				.up { game.menu.move_up() }
+				.down { game.menu.move_down() }
+				.space { game.menu.selected().do() }
+				else {}
 			}
 		}
-		.main_menu {
-			app.menu.selected().do()
+		else {}
+	}
+}
+
+// my_turn_event handles mouse, keyboard, and window events that
+// hgameen during the .my_turn state.
+fn (mut game Game) my_turn_event(event &tui.Event) {
+	match event.typ {
+		.key_down {}
+		else {}
+	}
+}
+
+// placing_ships_event handles mouse, keyboard, and window events
+// that hgameen during the .placing_ships state.
+fn (mut game Game) placing_ships_event(event &tui.Event) {
+	match event.typ {
+		.key_down {
+			match event.code {
+				.space {
+					// space press randomly places ships for now
+					// TODO: implement choosing where to place your
+					// own ships on the grid.
+					for game.ship_needs_placed.len > 0 {
+						ship := game.ship_needs_placed.last()
+						size := core.ship_sizes[ship]
+						orientation := unsafe {
+							core.Orientation(rand.int_in_range(0, 2) or {
+								println('This should never hgameen: ${err.msg()}')
+								exit(1)
+							})
+						}
+						pos := core.Pos.rand()
+						game.player_grid.place_ship(ship, size, pos, orientation) or { continue }
+						game.ship_needs_placed.pop()
+					}
+				}
+				else {}
+			}
 		}
 		else {}
 	}
 }
 
 // frame is what is drawn to the terminal UI each frame.
-fn frame(mut app App) {
-	app.width, app.height = term.get_terminal_size()
-	app.tui.set_cursor_position(0, 0)
+fn frame(mut game Game) {
+	game.width, game.height = term.get_terminal_size()
+	game.tui.set_cursor_position(0, 0)
 
-	match app.state {
+	// _ := game.state_channel.try_pop(mut game.state)
+	_ := game.banner_text_channel.try_pop(mut game.banner_text)
+
+	match game.state {
 		.wait_for_enemy_ship_placement {}
-		.main_menu {
-			banner := Banner.text(app.banner_text)
-			for i, line in banner.split_into_lines() {
-				x := (app.width / 2) - (line.len / 2)
-				app.tui.draw_text(x, i + 2, line)
-			}
-
-			app.menu.draw_center(mut app)
-		}
-		.placing_ships {
-			player := app.player.string(app.cursor)
-			enemy := app.enemy.string(core.Cursor{ x: -1, y: -1 })
-			app.tui.draw_text(0, 0, util.merge_strings(player, enemy, 4, '::'))
-			app.tui.draw_text(0, 15, Banner.text(app.banner_text))
-			app.tui.draw_text(0, 19, 'POS: ${app.cursor.val()}')
-		}
-		.initiate_server_connection {
-			app.tui.draw_text(1, 1, 'Initiating connection to server...')
-			app.tui.flush()
-			app.server = net.dial_tcp(server_host) or {
-				println('Could not connect to server: ${err.msg()}')
-				app.tui.clear()
-				app.tui.flush()
-				app.state = .main_menu
-				app.banner_text = 'Failed to connect to server.'
-				return
-			}
-			app.state = .connection_established
-			app.tui.clear()
-			app.tui.reset()
-		}
-		.connection_established {
-			mut server := app.server or {
-				app.tui.draw_text(1, 1, 'Connection to server failed.')
-				app.tui.flush()
-				return
-			}
-
-			app.tui.draw_text(1, 1, 'Connection to server established.')
-			mut i := 1
-			for {
-				i++
-				line := server.read_line()
-				if line == '' {
-					break
-				}
-
-				app.tui.draw_text(1, i, '[Server] ${line}')
-				app.tui.flush()
-
-				if line == 'Paired with player. Game will start soon.\n' {
-					app.state = .placing_ships
-					app.banner_text = 'Press space to place ships.'
-					app.tui.clear()
-					break
-				}
-			}
-			app.waiting_for_response = spawn fn [mut app, mut server] () {
-				for {
-					mut buf := []u8{len: 2}
-					server.read(mut buf) or {
-						app.switch_state(.main_menu, 'Failed to read from server: ${err.msg()}')
-						return
-					}
-					match buf {
-						core.messages['client']['cursor_position'] {
-							mut pos_bytes := []u8{len: 2}
-							server.read(mut pos_bytes) or {
-								app.switch_state(.main_menu, 'FIled to read from server: ${err.msg()}')
-								return
-							}
-							app.cursor.x = pos_bytes[0]
-							app.cursor.y = pos_bytes[1]
-						}
-						else {
-							app.switch_state(.main_menu, 'Invalid bytes received from server: ${buf}')
-							return
-						}
-					}
-				}
-			}()
-			app.tui.flush()
-		}
-		.my_turn {
-			player := app.player.string(core.Cursor{ x: -1, y: -1 })
-			enemy := app.enemy.string(app.cursor)
-			app.tui.draw_text(0, 0, util.merge_strings(player, enemy, 4, '::'))
-			app.tui.draw_text(0, 15, Banner.text(app.banner_text))
-			app.tui.draw_text(0, 19, 'POS: ${app.cursor.val()}')
-			app.tui.flush()
-		}
-		.their_turn {
-			player := app.player.string(app.cursor)
-			enemy := app.enemy.string(app.enemy_cursor)
-			app.tui.draw_text(0, 0, util.merge_strings(player, enemy, 4, '::'))
-			app.tui.draw_text(0, 15, Banner.text(app.banner_text))
-			app.tui.draw_text(0, 19, 'POS: ${app.cursor.val()}')
-			app.tui.flush()
-		}
+		.main_menu { game.main_menu_frame() }
+		.placing_ships { game.placing_ships_frame() }
+		.connection_established { game.connection_established_frame() }
+		.my_turn { game.my_turn_frame() }
+		.their_turn { game.their_turn_frame() }
 	}
 
-	// app.tui.set_cursor_position(0, 0)
-	// app.tui.reset()
-	app.tui.flush()
-	// app.tui.clear()
+	// game.tui.set_cursor_position(0, 0)
+	// game.tui.reset()
+	game.tui.flush()
+	// game.tui.clear()
+}
+
+// connection_established_frame draws the screen in the
+// .conection_established state.
+fn (mut game Game) connection_established_frame() {
+	mut server := game.server or {
+		game.banner_text = 'Connection to server lost.'
+		game.state = .main_menu
+		return
+	}
+
+	game.banner_text = 'Connection to server established.'
+	for {
+		mut buf := []u8{len: 2}
+		server.read(mut buf) or {
+			game.banner_text = 'Failed to read bytes from server: ${err.msg()}'
+			continue
+		}
+
+		buffer_is_empty := buf[0] == 0 && buf[1] == 0
+		if buffer_is_empty {
+			break
+		}
+
+		game.banner_text = '$: ${buf.bytestr()}'
+
+		if buf == core.messages['server']['paired_with_player'] {
+			game.state = .placing_ships
+			game.banner_text = 'Press space to place ships.'
+			break
+		}
+	}
+	game.main_menu_frame()
+}
+
+// main_menu_frame draws the screen in the .main_menu state.
+fn (mut game Game) main_menu_frame() {
+	game.draw_banner()
+	game.menu.draw_center(mut game)
+}
+
+// my_turn_frame draws the screen in the .my_turn state.
+fn (mut game Game) my_turn_frame() {
+	player := game.player_grid.string(game.player_grid.cursor)
+	enemy := game.enemy_grid.string(game.player_grid.cursor)
+	game.tui.draw_text(0, 0, util.merge_strings(player, enemy, 4, '::'))
+	game.tui.draw_text(0, 15, Banner.text(game.banner_text))
+	game.tui.draw_text(0, 19, 'My Cursor: ${game.player_grid.cursor.val()}')
+	game.tui.draw_text(0, 19, 'Their Cursor: ${game.enemy_grid.cursor.val()}')
+}
+
+// placing_ships_frame draws the screen in the .placing_ships state.
+fn (mut game Game) placing_ships_frame() {
+	player := game.player_grid.string(game.player_grid.cursor)
+	enemy := game.enemy_grid.string(game.enemy_grid.cursor)
+	game.tui.draw_text(0, 0, util.merge_strings(player, enemy, 4, '::'))
+	game.tui.draw_text(0, 15, Banner.text(game.banner_text))
+	game.tui.draw_text(0, 19, 'My Cursor: ${game.player_grid.cursor.val()}')
+	game.tui.draw_text(0, 19, 'Their Cursor: ${game.enemy_grid.cursor.val()}')
+}
+
+// their_turn_frame draws the screen in the .their_turn state.
+fn (mut game Game) their_turn_frame() {
+	player := game.player_grid.string(game.player_grid.cursor)
+	enemy := game.enemy_grid.string(game.enemy_grid.cursor)
+	game.tui.draw_text(0, 0, util.merge_strings(player, enemy, 4, '::'))
+	game.tui.draw_text(0, 15, Banner.text(game.banner_text))
+	game.tui.draw_text(0, 19, 'My Cursor: ${game.player_grid.cursor.val()}')
+	game.tui.draw_text(0, 19, 'Their Cursor: ${game.enemy_grid.cursor.val()}')
 }
 
 // draw_text_center draws text to the screen centered on both the horizontal
 // and vertical axes.
-fn draw_text_center(mut app App, text string) {
+fn draw_text_center(mut game Game, text string) {
 	str_offset := text.len / 2
-	app.tui.draw_text(app.width / 2 - str_offset, app.height / 2, text)
+	game.tui.draw_text(game.width / 2 - str_offset, game.height / 2, text)
 }
