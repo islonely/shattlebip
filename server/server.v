@@ -6,6 +6,7 @@ import term
 import rand
 import core
 import math
+import json
 
 // Server handles everything related to player connections.
 @[heap]
@@ -189,7 +190,11 @@ fn (mut server Server) handle_client(mut socket net.TcpConn) {
 	}
 	socket.write_string('Connection received.\n') or { return }
 	if server.queue.len == 0 {
-		writeln(mut socket, 'No available players. Adding to queue.')
+		// writeln(mut socket, 'No available players. Adding to queue.')
+		core.Message.added_player_to_queue.write(mut socket) or {
+			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
+			return
+		}
 		server.queue << socket
 	} else {
 		mut g := &Game{
@@ -206,8 +211,17 @@ fn (mut server Server) handle_client(mut socket net.TcpConn) {
 		// server.games[g.id] = g
 
 		// server.games << game
-		writeln(mut socket, 'Paired with player. Game will start soon.')
-		writeln(mut foe, 'Paired with player. Game will start soon.')
+		// writeln(mut socket, 'Paired with player. Game will start soon.')
+		// writeln(mut foe, 'Paired with player. Game will start soon.')
+		msg := core.Message.paired_with_player
+		msg.write(mut socket) or {
+			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
+			return
+		}
+		msg.write(mut foe) or {
+			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
+			return
+		}
 		g.start()
 	}
 }

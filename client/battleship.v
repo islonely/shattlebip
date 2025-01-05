@@ -5,19 +5,26 @@ import term
 import rand
 import net
 import core
+import log
 import util
+import time
 
 // 1902 = letters 19 and 02
 //		= SB
 // 		= ShattleBip
 const server_host = 'localhost:1902'
+const log_file_path = './shattlebip.log'
 
 fn main() {
 	w, h := term.get_terminal_size()
 	mut game := &Game{
 		width:  w
 		height: h
+		// logger: *log.new_thread_safe_log()
 	}
+	// lock game.logger {
+	// 	game.logger.set_output_path(log_file_path)
+	// }
 	game.tui = tui.init(
 		user_data:   game
 		event_fn:    event
@@ -59,7 +66,6 @@ enum GameState {
 	placing_ships
 	wait_for_enemy_ship_placement
 	main_menu
-	connection_established
 	my_turn
 	their_turn
 }
@@ -72,7 +78,6 @@ mut:
 	height              int
 	colors              []core.Color
 	state               GameState        = .main_menu
-	state_channel       chan GameState   = chan GameState{cap: 100}
 	ship_needs_placed   []core.CellState = [.carrier, .battleship, .cruiser, .submarine, .destroyer]
 	ship_rotated        bool
 	menu                Menu
@@ -80,6 +85,7 @@ mut:
 	banner_text_channel chan string = chan string{cap: 100}
 	server              ?&net.TcpConn
 	network_thread      thread
+	// logger              shared log.ThreadSafeLog
 
 	player_grid core.Grid = core.Grid{
 		name:           'Player'
@@ -99,12 +105,40 @@ mut:
 fn (mut game Game) initiate_server_connection() {
 	game.banner_text_channel <- 'Initiating server connection.'
 	game.server = net.dial_tcp(server_host) or {
-		game.state_channel <- GameState.main_menu
+		game.state = GameState.main_menu
 		game.banner_text_channel <- 'Failed to connect to server.'
 		return
 	}
-	game.state_channel <- GameState.connection_established
+	game.state = .main_menu
 	game.banner_text_channel <- 'Connected to server.'
+
+	mut server := game.server or {
+		game.banner_text = 'Connection to server lost.'
+		game.state = .main_menu
+		return
+	}
+
+	for {
+		msg := core.Message.read(mut server) or {
+			game.banner_text_channel <- 'Failed to read bytes from server: ${err.msg()}'
+			continue
+		}
+
+		match msg {
+			.null {
+				break
+			}
+			.paired_with_player {
+				game.state = .placing_ships
+				game.banner_text_channel <- 'Press space to place ships.'
+				break
+			}
+			else {
+				game.banner_text_channel <- 'Unexpected message from server: ${msg}'
+				continue
+			}
+		}
+	}
 }
 
 // draw_banner converts the Game.banner_text variable to the correct text
@@ -233,49 +267,49 @@ fn frame(mut game Game) {
 		.wait_for_enemy_ship_placement {}
 		.main_menu { game.main_menu_frame() }
 		.placing_ships { game.placing_ships_frame() }
-		.connection_established { game.connection_established_frame() }
 		.my_turn { game.my_turn_frame() }
 		.their_turn { game.their_turn_frame() }
 	}
 
-	// game.tui.set_cursor_position(0, 0)
-	// game.tui.reset()
+	game.tui.set_cursor_position(0, 0)
+	game.tui.reset()
 	game.tui.flush()
-	// game.tui.clear()
+	game.tui.clear()
+	time.sleep(time.millisecond * 333)
 }
 
 // connection_established_frame draws the screen in the
 // .conection_established state.
-fn (mut game Game) connection_established_frame() {
-	mut server := game.server or {
-		game.banner_text = 'Connection to server lost.'
-		game.state = .main_menu
-		return
-	}
+// fn (mut game Game) connection_established_frame() {
+// 	mut server := game.server or {
+// 		game.banner_text = 'Connection to server lost.'
+// 		game.state = .main_menu
+// 		return
+// 	}
 
-	game.banner_text = 'Connection to server established.'
-	for {
-		mut buf := []u8{len: 2}
-		server.read(mut buf) or {
-			game.banner_text = 'Failed to read bytes from server: ${err.msg()}'
-			continue
-		}
+// 	game.banner_text = 'Connection to server established.'
+// 	for {
+// 		mut buf := []u8{len: 2}
+// 		server.read(mut buf) or {
+// 			game.banner_text = 'Failed to read bytes from server: ${err.msg()}'
+// 			continue
+// 		}
 
-		buffer_is_empty := buf[0] == 0 && buf[1] == 0
-		if buffer_is_empty {
-			break
-		}
+// 		buffer_is_empty := buf[0] == 0 && buf[1] == 0
+// 		if buffer_is_empty {
+// 			break
+// 		}
 
-		game.banner_text = '$: ${buf.bytestr()}'
+// 		game.banner_text = '$: ${buf.bytestr()}'
 
-		if buf == core.messages['server']['paired_with_player'] {
-			game.state = .placing_ships
-			game.banner_text = 'Press space to place ships.'
-			break
-		}
-	}
-	game.main_menu_frame()
-}
+// 		if buf == core.messages['server']['paired_with_player'] {
+// 			game.state = .placing_ships
+// 			game.banner_text = 'Press space to place ships.'
+// 			break
+// 		}
+// 	}
+// 	game.main_menu_frame()
+// }
 
 // main_menu_frame draws the screen in the .main_menu state.
 fn (mut game Game) main_menu_frame() {
