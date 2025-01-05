@@ -27,13 +27,13 @@ pub const messages = {
 pub enum Message as u32 {
 	null
 	// client messages
-	client_lower
-	placed_ships   = 0x01_000001
+	client_lower = 0x01_000000
+	placed_ships = 0x01_000001
 	set_cursor_pos
 	attack_cell
 	client_upper
 	// server messages
-	server_lower
+	server_lower   = 0x02_000000
 	failed_to_read = 0x02_000001
 	failed_to_write
 	start_player
@@ -42,6 +42,7 @@ pub enum Message as u32 {
 	added_player_to_queue
 	paired_with_player
 	server_upper
+	raw_bytes
 }
 
 // write sends the enum to the provided TCP connection.
@@ -57,7 +58,7 @@ pub fn (msg Message) write(mut con net.TcpConn) ! {
 pub fn Message.read(mut con net.TcpConn) !Message {
 	mut buf := []u8{len: 4}
 	con.read(mut buf)!
-	return Message.from_bytes(buf)
+	return Message.from_bytes(buf)!
 }
 
 // to_bytes converts Message to bytes.
@@ -84,10 +85,33 @@ pub fn Message.from_bytes(src_bytes []u8) !Message {
 	is_val_in_message_enum := int_val == 0 || (int_val > int(Message.client_lower)
 		&& int_val < int(Message.client_upper))
 		|| (int_val > int(Message.server_lower) && int_val < int(Message.server_upper))
-	if !is_val_in_message_enum {
-		return error('enum Message does not contain a field with a value of ${int_val}')
+	if _unlikely_(!is_val_in_message_enum) {
+		return error('invalid val (${int_val})')
 	}
 
 	unsafe { free(return_msg) }
 	return unsafe { Message(int_val) }
+}
+
+// Message.is_valid_bytes checks whether the bytes are a valid value in enum Message.
+pub fn Message.is_valid_bytes(src_bytes []u8) bool {
+	sz := sizeof(Message)
+	if src_bytes.len != sz {
+		return false
+	}
+	mut return_msg := vcalloc(sz)
+	unsafe {
+		vmemcpy(return_msg, src_bytes.data, int(sz))
+	}
+
+	// check that the value exists in Message before attempting to cast
+	// return_msg to &Message.
+	int_val := unsafe { *&int(return_msg) }
+	is_val_in_message_enum := int_val == 0 || (int_val > int(Message.client_lower)
+		&& int_val < int(Message.client_upper))
+		|| (int_val > int(Message.server_lower) && int_val < int(Message.server_upper))
+	if is_val_in_message_enum {
+		return true
+	}
+	return false
 }

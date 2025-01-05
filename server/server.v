@@ -6,7 +6,6 @@ import term
 import rand
 import core
 import math
-import json
 
 // Server handles everything related to player connections.
 @[heap]
@@ -15,15 +14,21 @@ mut:
 	listener net.TcpListener
 	queue    []&net.TcpConn = []&net.TcpConn{}
 	games    map[string]&Game
+	// receives the uuid of the game being played
+	ended_games_chan   chan string
+	clean_games_thread thread
 }
 
 // Game is the game that two players are currently playing.
 @[heap]
 struct Game {
-	id string
+	id string = rand.uuid_v4()
 mut:
-	players []&net.TcpConn = []&net.TcpConn{}
-	grids   []core.Grid    = []core.Grid{}
+	states             shared []core.GameState
+	players            []&net.TcpConn = []&net.TcpConn{}
+	handle_tcp_threads []thread
+	grids              []core.Grid = []core.Grid{}
+	server             &Server
 }
 
 fn main() {
@@ -31,10 +36,13 @@ fn main() {
 		listener: net.listen_tcp(.ip6, ':1902')!
 	}
 	laddr := server.listener.addr()!
-	eprintln('Listen on ${laddr} ...')
+	println('[Server] Listen on ${laddr} ...')
 	defer {
-		server.listener.close() or { eprintln('Failed to close TCP listener:\n${err.msg()}.') }
+		server.listener.close() or {
+			eprintln('[Server] Failed to close TCP listener:\n${err.msg()}.')
+		}
 	}
+	server.clean_games_thread = go server.dispose_of_ended_games()
 	for {
 		mut socket := server.listener.accept()!
 		spawn server.handle_client(mut socket)
@@ -44,128 +52,44 @@ fn main() {
 // start starts a game by responding to player ship placement status.
 // And by selecting a random player to start the game.
 fn (mut g Game) start() {
-	// Pre-game: placing ships.
-	// read bytes from player[0] and send to player[1]
-	mut buf := []u8{len: 1000, init: 0}
-	g.players[0].read(mut buf) or {
-		g.players[1].write(core.messages['server']['failed_to_read']) or {
-			println('[Server] Failed to write to player[1]: ${err.msg()}')
-		}
-		println('[Server] Failed to read from player[0]: ${err.msg()}')
-		return
-	}
-	mut bytes := []u8{cap: 1000}
-	for b in buf {
-		if b == 0 {
-			break
-		}
-		bytes << b
-	}
-	g.players[1].write(bytes) or {
-		println('[Server] Failed to write to player[1]: ${err.msg()}')
-		return
-	}
-
-	// read bytes from player[1] and send to player[0]
-	buf = []u8{len: 1000, init: 0}
-	g.players[1].read(mut buf) or {
-		g.players[0].write(core.messages['server']['failed_to_read']) or {
-			println('[Server] Failed to write to player[1]: ${err.msg()}')
-		}
-		println('[Server] Failed to read from player[0]: ${err.msg()}')
-		return
-	}
-	bytes = []u8{cap: 1000}
-	for b in buf {
-		if b == 0 {
-			break
-		}
-		bytes << b
-	}
-	g.players[0].write(bytes) or {
-		println('[Server] Failed to write to player[0]: ${err.msg()}')
-		return
-	}
-
 	// choose the player at random to start the game
 	start_player := rand.int_in_range(0, 2) or {
 		// just make player[0] go first if this fails
 		println('[Server] Failed to generate random number: ${err.msg()}')
 		0
 	}
-	// since the only indices in the array are 0 and 1
-	// abs(0-1) = 1 or abs(1-0) = 0
 	end_player := math.abs(start_player - 1)
-	// send bytes to player letting them know who won the random chance
-	g.players[start_player].write(core.messages['server']['start_player']) or {
+
+	core.Message.start_player.write(mut g.players[start_player]) or {
 		println('[Server] Failed to write to player[${start_player}]: ${err.msg()}')
-		g.players[end_player].write(core.messages['server']['failed_to_write']) or {
+		core.Message.failed_to_write.write(mut g.players[end_player]) or {
 			println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
 		}
+		g.end()
 		return
 	}
-	g.players[end_player].write(core.messages['server']['end_player']) or {
+	core.Message.not_start_player.write(mut g.players[end_player]) or {
 		println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
-		g.players[end_player].write(core.messages['server']['failed_to_write']) or {
-			println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
+		core.Message.failed_to_write.write(mut g.players[start_player]) or {
+			println('[Server] Failed to write to player[${start_player}]: ${err.msg()}')
 		}
+		g.end()
 		return
 	}
 
-	g.gameplay(start_player)
+	g.handle_tcp_threads << go g.gameplay(start_player, mut g.players[start_player])
+	g.handle_tcp_threads << go g.gameplay(end_player, mut g.players[end_player])
 }
 
 // gameplay is the meat and potatoes of the game of shattlebip where the
 // players take turns blasting away towards the demise of each other.
-fn (mut g Game) gameplay(index int) {
-	// mut turn := index
-	for {
-		// assumes index is either 0 or 1
-		i := index
-		j := math.abs(i - 1)
-		// read message type from player
-		mut buf := []u8{len: 2}
-		g.players[i].read(mut buf) or {
-			println('[Server] Failed to read bytes from player[${i}]: ${err.msg()}')
-			g.players[j].write(core.messages['server']['failed_to_read']) or {
-				println('[Server] Failed to write bytes to player[${j}]: ${err.msg()}')
-			}
-			return
-		}
+fn (mut g Game) gameplay(index int, mut conn net.TcpConn) {
+}
 
-		// if message type is not in known list
-		if buf !in core.messages['client'].values() {
-			g.players[j].write(core.messages['server']['invalid_bytes']) or {
-				println('[Server] Failed to write to player[${j}]: ${err.msg()}')
-			}
-			return
-		}
-
-		// write type of message to other player
-		g.players[j].write(buf) or {
-			println('[Server] Failed to write to player[${j}]: ${err.msg()}')
-			g.players[i].write(core.messages['server']['failed_to_write']) or {
-				println('[Server] Faield to write to player[${i}]: ${err.msg()}')
-			}
-			return
-		}
-		// passthrough message to other player
-		g.players[i].read(mut buf) or {
-			println('[Server] Failed to read bytes from player[${i}]: ${err.msg()}')
-			g.players[j].write(core.messages['server']['failed_to_read']) or {
-				println('[Server] Failed to write bytes to player[${j}]: ${err.msg()}')
-			}
-			return
-		}
-		println('[Client ${i}] "${buf}"')
-		g.players[j].write(buf) or {
-			println('[Server] Failed to write to player[${j}]: ${err.msg()}')
-			g.players[i].write(core.messages['server']['failed_to_write']) or {
-				println('[Server] Failed to write to player[${i}]: ${err.msg()}')
-			}
-			return
-		}
-	}
+// end push the Game.id to the channel for the server to handle.
+@[inline]
+fn (mut g Game) end() {
+	g.server.ended_games_chan <- g.id
 }
 
 // close_game closes all the connections to players in a game.
@@ -175,6 +99,16 @@ fn (mut g Game) close_game() {
 		player.close() or {
 			println(term.bright_red('[Server]') + 'Failed to properly close connection to player.')
 		}
+	}
+}
+
+// dispose_of_ended_games
+fn (mut server Server) dispose_of_ended_games() {
+	for {
+		uuid := <-server.ended_games_chan
+		mut game := server.games[uuid] or { continue }
+		game.close_game()
+		server.games.delete(uuid)
 	}
 }
 
@@ -188,9 +122,7 @@ fn (mut server Server) handle_client(mut socket net.TcpConn) {
 			reader.free()
 		}
 	}
-	socket.write_string('Connection received.\n') or { return }
 	if server.queue.len == 0 {
-		// writeln(mut socket, 'No available players. Adding to queue.')
 		core.Message.added_player_to_queue.write(mut socket) or {
 			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
 			return
@@ -198,21 +130,18 @@ fn (mut server Server) handle_client(mut socket net.TcpConn) {
 		server.queue << socket
 	} else {
 		mut g := &Game{
-			id: rand.uuid_v4()
+			server: server
 		}
 		mut foe := server.queue.first()
 		g.players << foe
 		g.players << socket
+		lock g.states {
+			g.states = [.placing_ships, .placing_ships]
+		}
 		server.queue.delete(0)
 
-		defer {
-			g.close_game()
-		}
-		// server.games[g.id] = g
+		server.games[g.id] = g
 
-		// server.games << game
-		// writeln(mut socket, 'Paired with player. Game will start soon.')
-		// writeln(mut foe, 'Paired with player. Game will start soon.')
 		msg := core.Message.paired_with_player
 		msg.write(mut socket) or {
 			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
