@@ -111,7 +111,7 @@ pub fn (mut g Grid) badify() {
 
 // string converts the `Grid` to a string for terminal output with
 // the cursor denoted by a yellow color.
-pub fn (g Grid) string(cursor Cursor) string {
+pub fn (g Grid) str() string {
 	mut grid_bldr := strings.new_builder(500)
 	prefix := ' __'
 	name := prefix + g.name_colorizer(g.name)
@@ -130,10 +130,10 @@ pub fn (g Grid) string(cursor Cursor) string {
 		for x, cell in row {
 			last_cell := if x == 0 { cell } else { g.grid[y][x - 1] }
 			// location of cursor
-			if y == cursor.y && x == cursor.x && cell.state == .empty {
-				grid_bldr.write_string(cursor_color('|') + cursor_color('_'))
-			} else if y == cursor.y && x in [cursor.x, cursor.x + 1] {
-				grid_bldr.write_string(cursor_color('|') + cell_pictograph[cell.state.str()])
+			if y == g.cursor.y && x == g.cursor.x && cell.state == .empty {
+				grid_bldr.write_string(g.cursor.color('|') + g.cursor.color('_'))
+			} else if y == g.cursor.y && x in [g.cursor.x, g.cursor.x + 1] {
+				grid_bldr.write_string(g.cursor.color('|') + cell_pictograph[cell.state.str()])
 			}
 			// Cell.neutrality is .good
 			else if cell.neutrality == .good {
@@ -152,8 +152,8 @@ pub fn (g Grid) string(cursor Cursor) string {
 				grid_bldr.write_string(term.bright_blue('|') + cell_pictograph[cell.state.str()])
 			}
 		}
-		if y == cursor.y && cursor.x == 9 {
-			grid_bldr.write_string(cursor_color('|') + ' |\n')
+		if y == g.cursor.y && g.cursor.x == 9 {
+			grid_bldr.write_string(g.cursor.color('|') + ' |\n')
 		} else {
 			grid_bldr.write_string(term.bright_blue('|') + ' |\n')
 		}

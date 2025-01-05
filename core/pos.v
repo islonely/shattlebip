@@ -26,8 +26,24 @@ pub fn Pos.rand() Pos {
 	// vfmt on
 }
 
+// Pos.from_bytes converts an array of bytes to Pos.
+@[unsafe]
+pub fn Pos.from_bytes(bytes []u8) Pos {
+	mut pos := Pos{}
+	unsafe { vmemcpy(&pos, bytes.data, sizeof(Pos)) }
+	return pos
+}
+
 // is_null returns true if the position exists outside the gridspace.
 @[inline]
 pub fn (pos Pos) is_null() bool {
 	return pos.x < 0 || pos.y < 0 || pos.x > 9 || pos.y > 9
+}
+
+// to_bytes converts the data of Pos to an array of bytes.
+pub fn (pos Pos) to_bytes() []u8 {
+	sz := sizeof(Pos)
+	mut bytes := []u8{len: int(sz)}
+	unsafe { vmemcpy(bytes.data, &pos, sz) }
+	return bytes
 }

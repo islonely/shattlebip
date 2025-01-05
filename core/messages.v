@@ -28,13 +28,13 @@ pub enum Message as u32 {
 	null
 	// client messages
 	client_lower = 0x01_000000
-	placed_ships = 0x01_000001
+	placed_ships
 	set_cursor_pos
 	attack_cell
 	client_upper
 	// server messages
-	server_lower   = 0x02_000000
-	failed_to_read = 0x02_000001
+	server_lower = 0x02_000000
+	failed_to_read
 	failed_to_write
 	start_player
 	not_start_player

@@ -32,21 +32,18 @@ mut:
 }
 
 fn main() {
-	mut server := &Server{
-		listener: net.listen_tcp(.ip6, ':1902')!
+	mut server := &Server{}
+	server.init() or {
+		println(term.bright_red('[Server] ') + err.msg())
+		exit(1)
 	}
-	laddr := server.listener.addr()!
-	println('[Server] Listen on ${laddr} ...')
-	defer {
-		server.listener.close() or {
-			eprintln('[Server] Failed to close TCP listener:\n${err.msg()}.')
-		}
-	}
-	server.clean_games_thread = go server.dispose_of_ended_games()
+	server.clean_games_thread = spawn server.dispose_of_ended_games()
 	for {
 		mut socket := server.listener.accept()!
 		spawn server.handle_client(mut socket)
 	}
+
+	server.listener.close() or { eprintln('[Server] Failed to close TCP listener:\n${err.msg()}.') }
 }
 
 // start starts a game by responding to player ship placement status.
@@ -77,13 +74,55 @@ fn (mut g Game) start() {
 		return
 	}
 
-	g.handle_tcp_threads << go g.gameplay(start_player, mut g.players[start_player])
-	g.handle_tcp_threads << go g.gameplay(end_player, mut g.players[end_player])
+	g.handle_tcp_threads << spawn g.gameplay(start_player)
+	g.handle_tcp_threads << spawn g.gameplay(end_player)
 }
 
 // gameplay is the meat and potatoes of the game of shattlebip where the
 // players take turns blasting away towards the demise of each other.
-fn (mut g Game) gameplay(index int, mut conn net.TcpConn) {
+fn (mut g Game) gameplay(index int) {
+	mut player := g.players[index]
+	mut enemy := g.players[math.abs(index - 1)]
+
+	for {
+		mut raw_msg := []u8{len: 4}
+		player.read(mut raw_msg) or {
+			println('[Server] failed to read bytes from client: ${err.msg()}')
+			g.end()
+			return
+		}
+		msg := core.Message.from_bytes(raw_msg) or {
+			println('[Server] failed to convert bytes to Message: ${err.msg()}')
+			g.end()
+			return
+		}
+		match msg {
+			.set_cursor_pos {
+				mut pos_bytes := []u8{len: int(sizeof(core.Pos))}
+				player.read(mut pos_bytes) or {
+					println('[Server] failed to read Pos data: ${err.msg()}')
+					g.end()
+					return
+				}
+				println(pos_bytes)
+				core.Message.set_cursor_pos.write(mut enemy) or {
+					println('[Server] failed to write Message: ${err.msg()}')
+					g.end()
+					return
+				}
+				enemy.write(pos_bytes) or {
+					println('[Server] failed to write pos bytes: ${err.msg()}')
+					g.end()
+					return
+				}
+			}
+			else {
+				println('[Server] unexpected Message received: ${msg}')
+				g.end()
+				return
+			}
+		}
+	}
 }
 
 // end push the Game.id to the channel for the server to handle.
@@ -153,6 +192,15 @@ fn (mut server Server) handle_client(mut socket net.TcpConn) {
 		}
 		g.start()
 	}
+}
+
+// init sets up the server and and loads config files.
+fn (mut server Server) init() ! {
+	server.listener = net.listen_tcp(.ip6, '[::1]:1902') or {
+		return error('failed to listen on [::1]:1902')
+	}
+	laddr := server.listener.addr()!
+	println('[Server] Listen on ${laddr} ...')
 }
 
 // writeln sends a line across the TCP connection without regard to

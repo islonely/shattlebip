@@ -2,16 +2,18 @@ module core
 
 import term
 
-// colorizer function i.e., `fn cursor_color(string) string`
+// terminal color text function. See V's term module for examples.
 pub const cursor_color = term.bright_yellow
+pub const invalid_cursor_color = term.bright_bg_red
 
 // Cursor is a position on the `Grid` which the user has
 // currently selected.
 pub struct Cursor {
 	Pos
 __global:
-	selected Pos   = Pos.null()
-	history  []Pos = []Pos{cap: 200}
+	color    fn (string) string = cursor_color
+	selected Pos                = Pos.null()
+	history  []Pos              = []Pos{cap: 200}
 }
 
 // val converts the X value to a letter concatenated with the Y value.
