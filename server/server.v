@@ -27,6 +27,7 @@ mut:
 pub struct PlayerTcpConn {
 	net.TcpConn
 mut:
+	id          string = rand.uuid_v4()
 	queue_index ?int
 }
 
@@ -50,11 +51,13 @@ fn main() {
 	}
 	server.clean_games_thread = spawn server.dispose_of_ended_games()
 	for {
-		mut socket := server.listener.accept() or {
-			println(term.bright_red('[Server] ') + 'Failed to start listener: ${err.msg()}')
-			exit(1)
+		mut socket := &PlayerTcpConn{
+			TcpConn: server.listener.accept() or {
+				println(term.bright_red('[Server] ') + 'Failed to start listener: ${err.msg()}')
+				exit(1)
+			}
 		}
-		spawn server.handle_client(mut &PlayerTcpConn(socket))
+		spawn server.handle_client(mut socket)
 	}
 
 	server.listener.close() or { eprintln('[Server] Failed to close TCP listener:\n${err.msg()}.') }
@@ -73,7 +76,7 @@ fn (mut g Game) start() {
 
 	core.Message.start_player.write(mut g.players[start_player]) or {
 		println('[Server] Failed to write to player[${start_player}]: ${err.msg()}')
-		core.Message.failed_to_write.write(mut g.players[end_player]) or {
+		core.Message.connection_terminated.write(mut g.players[end_player]) or {
 			println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
 		}
 		g.end()
@@ -81,7 +84,7 @@ fn (mut g Game) start() {
 	}
 	core.Message.not_start_player.write(mut g.players[end_player]) or {
 		println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
-		core.Message.failed_to_write.write(mut g.players[start_player]) or {
+		core.Message.connection_terminated.write(mut g.players[start_player]) or {
 			println('[Server] Failed to write to player[${start_player}]: ${err.msg()}')
 		}
 		g.end()
@@ -187,7 +190,7 @@ fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
 	socket.set_read_timeout(default_read_timeout)
 	socket.set_write_timeout(default_write_timeout)
 
-	println('[Server] new client: ${client_addr}')
+	println('[Server] new client (${socket.id}): ${client_addr}')
 	if server.queue.len == 0 {
 		core.Message.added_player_to_queue.write(mut socket) or {
 			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
@@ -200,7 +203,8 @@ fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
 		}
 		for {
 			msg := core.Message.read(mut socket) or {
-				println(term.bright_red('[Server]') + ' Failed to read message: ${err.msg()}')
+				println(term.bright_red('[Server]') +
+					' (${socket.id}) Failed to read message: ${err.msg()}')
 				return
 			}
 
@@ -214,6 +218,7 @@ fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
 					}
 					core.Message.connection_terminated.write(mut socket) or {}
 					socket.close() or {}
+					return
 				}
 				else {}
 			}

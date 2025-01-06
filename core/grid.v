@@ -6,10 +6,10 @@ import util
 
 // cell_pictograph is the icon that represents a `CellState`.
 pub const cell_pictograph = {
-	'carrier':    term_pastel('₪')
-	'battleship': term_pastel('₪')
+	'carrier':    term_pastel('Ħ')
+	'battleship': term_pastel('Җ')
 	'cruiser':    term_pastel('₪')
-	'submarine':  term_pastel('₪')
+	'submarine':  term_pastel('§')
 	'destroyer':  term_pastel('₪')
 	'empty':      term.bright_blue('_')
 	'hit':        term.bright_red('✛')
@@ -124,16 +124,38 @@ pub fn (g Grid) str() string {
 	for i in 0 .. 10 {
 		grid_bldr.write_string(' ${i}')
 	}
-	grid_bldr.write_string('  |\n|    ' + term.bright_blue(' _'.repeat(10)) + '  |\n')
+	grid_bldr.write_string('  |\n|    ')
+	for x in 0 .. 10 {
+		if x == g.cursor.x {
+			grid_bldr.write_string(g.cursor.color(' _'))
+			continue
+		}
+		grid_bldr.write_string(term.bright_blue(' _'))
+	}
+	grid_bldr.write_string('  |\n')
 	for y, row in g.grid {
-		grid_bldr.write_string('| ${u8(y + 65).ascii_str()}  ')
+		// draws the grid container and letter: "| A "
+		grid_bldr.write_string('| ${u8(y + 65).ascii_str()} ' +
+			if y == g.cursor.y { g.cursor.color('>') } else { ' ' })
+
+		// draws "|_" back to back to form row in grid
 		for x, cell in row {
 			last_cell := if x == 0 { cell } else { g.grid[y][x - 1] }
+			// line before cursor
+			if y == g.cursor.y - 1 && x == g.cursor.x {
+				grid_bldr.write_string(term.bright_blue('|') +
+					if cell.state == .empty { g.cursor.color('_') } else { cell_pictograph[cell.state.str()] })
+			}
 			// location of cursor
-			if y == g.cursor.y && x == g.cursor.x && cell.state == .empty {
+			else if y == g.cursor.y && x == g.cursor.x && cell.state == .empty {
 				grid_bldr.write_string(g.cursor.color('|') + g.cursor.color('_'))
 			} else if y == g.cursor.y && x in [g.cursor.x, g.cursor.x + 1] {
 				grid_bldr.write_string(g.cursor.color('|') + cell_pictograph[cell.state.str()])
+			}
+			// last line and cursor column
+			else if x == g.cursor.x && y == 9 {
+				grid_bldr.write_string(term.bright_blue('|') +
+					if cell.state == .empty { g.cursor.color('_') } else { cell_pictograph[cell.state.str()] })
 			}
 			// Cell.neutrality is .good
 			else if cell.neutrality == .good {
@@ -152,12 +174,19 @@ pub fn (g Grid) str() string {
 				grid_bldr.write_string(term.bright_blue('|') + cell_pictograph[cell.state.str()])
 			}
 		}
-		if y == g.cursor.y && g.cursor.x == 9 {
-			grid_bldr.write_string(g.cursor.color('|') + ' |\n')
+
+		// draws the last cell bar and grid container: "| |\n"
+		if y == g.cursor.y {
+			if g.cursor.x == 9 {
+				grid_bldr.write_string(g.cursor.color('|<') + '|\n')
+			} else {
+				grid_bldr.write_string(term.bright_blue('|') + g.cursor.color('<') + '|\n')
+			}
 		} else {
 			grid_bldr.write_string(term.bright_blue('|') + ' |\n')
 		}
 	}
+	// draws the grid container bottom minus 2 for the pipes "|" on each side.
 	grid_bldr.write_string('|${'_'.repeat(g.len - 2)}|')
 	return grid_bldr.str()
 }

@@ -39,7 +39,7 @@ fn main() {
 				label: 'Online Play'
 				state: .unselected
 				do:    fn [mut game] () {
-					spawn game.initiate_server_connection()
+					game.network_thread = spawn game.initiate_server_connection()
 				}
 			},
 			MenuItem{
@@ -102,70 +102,6 @@ mut:
 	}
 }
 
-// initiate_server_connection tries to connect to the server.
-fn (mut game Game) initiate_server_connection() {
-	if disconnect_idx := game.menu.find('Disconnect') {
-		game.menu.items[disconnect_idx].state = .unselected
-	}
-	game.banner_text_channel <- 'Initiating server connection.'
-	game.server = net.dial_tcp(server_host) or {
-		game.banner_text_channel <- 'Failed to connect to server.'
-		return
-	}
-
-	if mut server := game.server {
-		server.set_read_timeout(default_read_timeout)
-		server.set_write_timeout(default_write_timeout)
-	}
-
-	game.banner_text_channel <- 'Connected to server.'
-	game.connected()
-}
-
-// connected handles the game logic after connecting to the server
-fn (mut game Game) connected() {
-	mut server := game.server or {
-		game.banner_text = 'Connection to server lost.'
-		game.state = .main_menu
-		return
-	}
-
-	for {
-		mut raw_msg := []u8{len: 4}
-		server.read(mut raw_msg) or {
-			game.banner_text_channel <- 'Failed to read bytes from server: ${err.msg()}'
-			continue
-		}
-		if !core.Message.is_valid_bytes(raw_msg) {
-			game.banner_text_channel <- 'Invalid bytes received from server: ${raw_msg.str()}'
-			continue
-		}
-
-		msg := core.Message.from_bytes(raw_msg) or {
-			game.banner_text_channel <- 'Failed to convert bytes to enum Message: ${err.msg()}'
-			continue
-		}
-
-		match game.state {
-			.main_menu {
-				game.connected_main_menu(msg, raw_msg)
-			}
-			.my_turn {
-				game.connected_my_turn(msg, raw_msg)
-			}
-			.placing_ships {
-				game.connected_placing_ships(msg, raw_msg)
-			}
-			.their_turn {
-				game.connected_their_turn(msg, raw_msg)
-			}
-			.wait_for_enemy_ship_placement {
-				game.connected_wait_for_enemy_ship_placement(msg, raw_msg)
-			}
-		}
-	}
-}
-
 // draw_banner converts the Game.banner_text variable to the correct text
 // and draws it to the screen.
 fn (mut game Game) draw_banner() {
@@ -186,20 +122,17 @@ fn (mut game Game) switch_state(state core.GameState, banner_text string) {
 // write_cursor sends the position of the enemy cursor to the server.
 fn (mut game Game) write_cursor() {
 	mut server := game.server or {
-		game.state = .main_menu
-		game.banner_text_channel <- 'server connection interrupted: ${err.msg()}'
+		game.end('server connection interrupted: ${err.msg()}')
 		return
 	}
 
 	core.Message.set_cursor_pos.write(mut server) or {
-		game.state = .main_menu
-		game.banner_text_channel <- 'failed to write Message to server: ${err.msg()}'
+		game.end('failed to write Message to server: ${err.msg()}')
 		return
 	}
 	pos_bytes := game.enemy_grid.cursor.Pos.to_bytes()
 	server.write(pos_bytes) or {
-		game.state = .main_menu
-		game.banner_text_channel <- 'Failed to write bytes to server: ${err.msg()}'
+		game.end('Failed to write bytes to server: ${err.msg()}')
 		return
 	}
 }
@@ -207,15 +140,14 @@ fn (mut game Game) write_cursor() {
 // read_cursor reads the position of the player cursor from the server.
 fn (mut game Game) read_cursor() {
 	mut server := game.server or {
-		game.state = .main_menu
-		game.banner_text_channel <- 'server connection interrupted: ${err.msg()}'
+		game.end('server connection interrupted: ${err.msg()}')
 		return
 	}
 
 	mut pos_bytes := []u8{len: int(sizeof(core.Pos))}
 	server.read(mut pos_bytes) or {
-		game.state = .main_menu
-		game.banner_text_channel <- 'failed to read bytes from server: ${err.msg()}'
+		game.end('failed to read bytes from server: ${err.msg()}')
+		return
 	}
 	pos := unsafe { core.Pos.from_bytes(pos_bytes) }
 	game.player_grid.cursor.Pos = pos
@@ -320,14 +252,12 @@ fn (mut game Game) placing_ships_event(event &tui.Event) {
 					}
 
 					mut server := game.server or {
-						game.state = .main_menu
-						game.banner_text_channel <- 'connection to server interrupted'
+						game.end('connection to server interrupted')
 						return
 					}
 
 					core.Message.placed_ships.write(mut server) or {
-						game.state = .main_menu
-						game.banner_text_channel <- 'failed to write message to server: ${err.msg()}'
+						game.end('failed to write message to server: ${err.msg()}')
 						return
 					}
 					if game.has_enemy_placed_ships {
@@ -471,10 +401,13 @@ fn (mut game Game) end(msg string) {
 	game.banner_text_channel <- msg
 	if mut server := game.server {
 		core.Message.terminate_connection.write(mut server) or {}
+		game.network_thread.wait()
+		println('foo')
 		server.close() or {}
 		game.server = none
 	}
 	if index := game.menu.find('Disconnect') {
 		game.menu.items[index].state = .disabled
+		game.menu.move_down()
 	}
 }

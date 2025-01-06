@@ -1,6 +1,74 @@
 module main
 
 import core
+import net
+
+// initiate_server_connection tries to connect to the server.
+fn (mut game Game) initiate_server_connection() {
+	if disconnect_idx := game.menu.find('Disconnect') {
+		game.menu.items[disconnect_idx].state = .unselected
+	}
+	game.banner_text_channel <- 'Initiating server connection.'
+	game.server = net.dial_tcp(server_host) or {
+		game.banner_text_channel <- 'Failed to connect to server.'
+		return
+	}
+
+	if mut server := game.server {
+		server.set_read_timeout(default_read_timeout)
+		server.set_write_timeout(default_write_timeout)
+	}
+
+	game.banner_text_channel <- 'Connected to server.'
+	game.connected()
+}
+
+// connected handles the game logic after connecting to the server
+fn (mut game Game) connected() {
+	mut server := game.server or {
+		game.end('Connection to server lost.')
+		return
+	}
+
+	for {
+		mut raw_msg := []u8{len: 4}
+		server.read(mut raw_msg) or {
+			game.banner_text_channel <- 'Failed to read bytes from server: ${err.msg()}'
+			continue
+		}
+		if !core.Message.is_valid_bytes(raw_msg) {
+			game.banner_text_channel <- 'Invalid bytes received from server: ${raw_msg.str()}'
+			continue
+		}
+
+		msg := core.Message.from_bytes(raw_msg) or {
+			game.banner_text_channel <- 'Failed to convert bytes to enum Message: ${err.msg()}'
+			continue
+		}
+
+		if msg == .connection_terminated {
+			return
+		}
+
+		match game.state {
+			.main_menu {
+				game.connected_main_menu(msg, raw_msg)
+			}
+			.my_turn {
+				game.connected_my_turn(msg, raw_msg)
+			}
+			.placing_ships {
+				game.connected_placing_ships(msg, raw_msg)
+			}
+			.their_turn {
+				game.connected_their_turn(msg, raw_msg)
+			}
+			.wait_for_enemy_ship_placement {
+				game.connected_wait_for_enemy_ship_placement(msg, raw_msg)
+			}
+		}
+	}
+}
 
 // connected_main_menu handles the Messages received from the server during
 // the .main_menu state.
