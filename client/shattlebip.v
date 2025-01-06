@@ -11,7 +11,6 @@ import time
 // 1902 = letters 19 and 02
 //		= SB
 // 		= ShattleBip
-const server_host = '[::1]:1902'
 const log_file_path = './shattlebip.log'
 const default_read_timeout = time.minute * 5
 const default_write_timeout = time.minute * 5

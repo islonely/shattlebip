@@ -3,6 +3,8 @@ module main
 import core
 import net
 
+const server_host = '[::1]:1902'
+
 // initiate_server_connection tries to connect to the server.
 fn (mut game Game) initiate_server_connection() {
 	if disconnect_idx := game.menu.find('Disconnect') {
