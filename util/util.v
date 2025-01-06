@@ -1,6 +1,6 @@
 module util
 
-// merge_strings combines to strings spanning multiple lines.
+// merge_strings combines two strings spanning multiple lines.
 pub fn merge_strings(s1 string, s2 string, padding int, divider string) string {
 	mut lines1 := s1.split_into_lines()
 	mut lines2 := s2.split_into_lines()

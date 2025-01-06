@@ -1,22 +1,33 @@
 module main
 
-import io
 import net
 import term
 import rand
 import core
 import math
+import time
+
+const default_read_timeout = time.minute * 5
+const default_write_timeout = time.minute * 5
 
 // Server handles everything related to player connections.
 @[heap]
 struct Server {
 mut:
 	listener net.TcpListener
-	queue    []&net.TcpConn = []&net.TcpConn{}
+	queue    shared []&PlayerTcpConn = []&PlayerTcpConn{}
 	games    map[string]&Game
 	// receives the uuid of the game being played
 	ended_games_chan   chan string
 	clean_games_thread thread
+}
+
+// PlayerTcpConn is a TCP connection with an associated index in server queue.
+@[heap]
+pub struct PlayerTcpConn {
+	net.TcpConn
+mut:
+	queue_index ?int
 }
 
 // Game is the game that two players are currently playing.
@@ -25,7 +36,7 @@ struct Game {
 	id string = rand.uuid_v4()
 mut:
 	states             shared []core.GameState
-	players            []&net.TcpConn = []&net.TcpConn{}
+	players            []&PlayerTcpConn = []&PlayerTcpConn{}
 	handle_tcp_threads []thread
 	grids              []core.Grid = []core.Grid{}
 	server             &Server
@@ -39,8 +50,11 @@ fn main() {
 	}
 	server.clean_games_thread = spawn server.dispose_of_ended_games()
 	for {
-		mut socket := server.listener.accept()!
-		spawn server.handle_client(mut socket)
+		mut socket := server.listener.accept() or {
+			println(term.bright_red('[Server] ') + 'Failed to start listener: ${err.msg()}')
+			exit(1)
+		}
+		spawn server.handle_client(mut &PlayerTcpConn(socket))
 	}
 
 	server.listener.close() or { eprintln('[Server] Failed to close TCP listener:\n${err.msg()}.') }
@@ -104,7 +118,6 @@ fn (mut g Game) gameplay(index int) {
 					g.end()
 					return
 				}
-				println(pos_bytes)
 				core.Message.set_cursor_pos.write(mut enemy) or {
 					println('[Server] failed to write Message: ${err.msg()}')
 					g.end()
@@ -115,6 +128,16 @@ fn (mut g Game) gameplay(index int) {
 					g.end()
 					return
 				}
+			}
+			.placed_ships {
+				msg.write(mut enemy) or {
+					println('[Server] failed to write message: ${err.msg()}')
+					g.end()
+					return
+				}
+			}
+			.terminate_connection {
+				g.end()
 			}
 			else {
 				println('[Server] unexpected Message received: ${msg}')
@@ -128,6 +151,9 @@ fn (mut g Game) gameplay(index int) {
 // end push the Game.id to the channel for the server to handle.
 @[inline]
 fn (mut g Game) end() {
+	for mut player in g.players {
+		core.Message.connection_terminated.write(mut player) or {}
+	}
 	g.server.ended_games_chan <- g.id
 }
 
@@ -152,41 +178,68 @@ fn (mut server Server) dispose_of_ended_games() {
 }
 
 // handle_client either queues players or pairs them for a game.
-fn (mut server Server) handle_client(mut socket net.TcpConn) {
-	client_addr := socket.peer_addr() or { return }
-	eprintln('> new client: ${client_addr}')
-	mut reader := io.new_buffered_reader(reader: socket)
-	defer {
-		unsafe {
-			reader.free()
-		}
+fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
+	client_addr := socket.peer_addr() or {
+		println(term.bright_red('[Server] Failed to get peer address.'))
+		socket.close() or {}
+		return
 	}
+	socket.set_read_timeout(default_read_timeout)
+	socket.set_write_timeout(default_write_timeout)
+
+	println('[Server] new client: ${client_addr}')
 	if server.queue.len == 0 {
 		core.Message.added_player_to_queue.write(mut socket) or {
 			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
 			return
 		}
-		server.queue << socket
+
+		lock server.queue {
+			socket.queue_index = server.queue.len
+			server.queue << socket
+		}
+		for {
+			msg := core.Message.read(mut socket) or {
+				println(term.bright_red('[Server]') + ' Failed to read message: ${err.msg()}')
+				return
+			}
+
+			match msg {
+				.terminate_connection {
+					if index := socket.queue_index {
+						lock server.queue {
+							server.queue.delete(index)
+						}
+						socket.queue_index = none
+					}
+					core.Message.connection_terminated.write(mut socket) or {}
+					socket.close() or {}
+				}
+				else {}
+			}
+		}
 	} else {
 		mut g := &Game{
 			server: server
 		}
-		mut foe := server.queue.first()
+		mut foe := unsafe { &PlayerTcpConn(nil) }
+		lock server.queue {
+			foe = server.queue.first()
+			server.queue.delete(0)
+		}
 		g.players << foe
 		g.players << socket
 		lock g.states {
 			g.states = [.placing_ships, .placing_ships]
 		}
-		server.queue.delete(0)
 
 		server.games[g.id] = g
 
-		msg := core.Message.paired_with_player
-		msg.write(mut socket) or {
+		core.Message.paired_with_player.write(mut socket) or {
 			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
 			return
 		}
-		msg.write(mut foe) or {
+		core.Message.paired_with_player.write(mut foe) or {
 			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
 			return
 		}
@@ -201,13 +254,4 @@ fn (mut server Server) init() ! {
 	}
 	laddr := server.listener.addr()!
 	println('[Server] Listen on ${laddr} ...')
-}
-
-// writeln sends a line across the TCP connection without regard to
-// whether or not an error returned.
-@[inline]
-fn writeln(mut con net.TcpConn, str string) {
-	con.write_string(str + '\n') or {
-		println(term.bright_red('[Server]') + 'writeln: ${err.msg()}')
-	}
 }

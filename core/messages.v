@@ -31,9 +31,11 @@ pub enum Message as u32 {
 	placed_ships
 	set_cursor_pos
 	attack_cell
+	terminate_connection
 	client_upper
 	// server messages
 	server_lower = 0x02_000000
+	connection_terminated
 	failed_to_read
 	failed_to_write
 	start_player
@@ -41,13 +43,13 @@ pub enum Message as u32 {
 	invalid_bytes
 	added_player_to_queue
 	paired_with_player
-	server_upper
 	raw_bytes
+	server_upper
 }
 
 // write sends the enum to the provided TCP connection.
 @[inline]
-pub fn (msg Message) write(mut con net.TcpConn) ! {
+pub fn (msg Message) write(mut con net.Connection) ! {
 	unsafe {
 		con.write(msg.to_bytes())!
 	}
@@ -55,7 +57,7 @@ pub fn (msg Message) write(mut con net.TcpConn) ! {
 
 // read tries to read for an enum from the provided TCP connection.
 @[inline]
-pub fn Message.read(mut con net.TcpConn) !Message {
+pub fn Message.read(mut con net.Connection) !Message {
 	mut buf := []u8{len: 4}
 	con.read(mut buf)!
 	return Message.from_bytes(buf)!

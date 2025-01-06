@@ -78,6 +78,16 @@ fn (m Menu) draw(mut game Game, x int, y int) {
 	}
 }
 
+// find searches for a `MenuItem` with the same label as the one provided.
+pub fn (menu Menu) find(label string) ?int {
+	for i, item in menu.items {
+		if item.label == label {
+			return i
+		}
+	}
+	return none
+}
+
 // selected gets the currently selected `MenuItem`.
 @[inline]
 fn (m Menu) selected() MenuItem {
