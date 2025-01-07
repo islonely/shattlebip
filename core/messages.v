@@ -32,6 +32,9 @@ pub enum Message as u32 {
 	set_cursor_pos
 	attack_cell
 	terminate_connection
+	hit
+	miss
+	not_your_turn
 	client_upper
 	// server messages
 	server_lower = 0x02_000000

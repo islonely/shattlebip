@@ -125,10 +125,6 @@ fn (mut game Game) write_cursor() {
 		return
 	}
 
-	core.Message.set_cursor_pos.write(mut server) or {
-		game.end('failed to write Message to server: ${err.msg()}')
-		return
-	}
 	pos_bytes := game.enemy_grid.cursor.Pos.to_bytes()
 	server.write(pos_bytes) or {
 		game.end('Failed to write bytes to server: ${err.msg()}')
@@ -197,11 +193,47 @@ fn (mut game Game) main_menu_event(event &tui.Event) {
 // my_turn_event handles mouse, keyboard, and window events that
 // happen during the .my_turn state.
 fn (mut game Game) my_turn_event(event &tui.Event) {
+	mut server := game.server or {
+		game.end('connection to server interrupted')
+		return
+	}
+
 	match event.typ {
 		.key_down {
 			match event.code {
 				.left, .right, .up, .down {
 					game.move_cursor(event.code, mut game.enemy_grid, true)
+				}
+				.space {
+					msg := core.Message.attack_cell
+					msg.write(mut server) or {
+						game.end('failed to write to server (${msg}): ${err.msg}')
+						return
+					}
+					game.write_cursor()
+					hit_or_miss := core.Message.read(mut server) or {
+						game.end('failed to read message: ${err.msg()}')
+						return
+					}
+
+					match hit_or_miss {
+						.hit {
+							game.enemy_grid.set_at_cursor(core.CellState.hit)
+							game.banner_text_channel <- 'Hit ${game.enemy_grid.cursor.val()}! Their turn.'
+						}
+						.miss {
+							game.enemy_grid.set_at_cursor(core.CellState.miss)
+							game.banner_text_channel <- 'Miss. Their turn.'
+						}
+						.not_your_turn {
+							game.banner_text_channel <- "It's not your turn."
+						}
+						else {
+							game.end('unexpected message: ${hit_or_miss}')
+							return
+						}
+					}
+					game.state = .their_turn
 				}
 				else {}
 			}
@@ -325,6 +357,15 @@ fn (mut game Game) move_cursor(direction tui.KeyCode, mut grid core.Grid, send_t
 	if !send_to_server {
 		return
 	}
+	mut server := game.server or {
+		game.end('connection interrupted')
+		return
+	}
+
+	core.Message.set_cursor_pos.write(mut server) or {
+		game.end('failed to write Message to server: ${err.msg()}')
+		return
+	}
 	game.write_cursor()
 }
 
@@ -397,14 +438,11 @@ fn draw_text_center(mut game Game, text string) {
 // end ends a game and closes the connection to the server.
 fn (mut game Game) end(msg string) {
 	game.state = .main_menu
-	game.banner_text_channel <- msg
 	if mut server := game.server {
-		core.Message.terminate_connection.write(mut server) or {}
-		game.network_thread.wait()
-		println('foo')
 		server.close() or {}
 		game.server = none
 	}
+	game.banner_text_channel <- msg
 	if index := game.menu.find('Disconnect') {
 		game.menu.items[index].state = .disabled
 		game.menu.move_down()

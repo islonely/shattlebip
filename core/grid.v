@@ -12,8 +12,8 @@ pub const cell_pictograph = {
 	'submarine':  term_pastel('§')
 	'destroyer':  term_pastel('₪')
 	'empty':      term.bright_blue('_')
-	'hit':        term.bright_red('✛')
-	'miss':       term.white('✗')
+	'hit':        term.bright_red('✗')
+	'miss':       term.white('◯')
 }
 // ship_sizes is the length of each ship.
 pub const ship_sizes = {
@@ -66,7 +66,7 @@ fn good_color(str string) string {
 
 // Cell is a Cell in the 10x10 Grid.
 pub struct Cell {
-mut:
+pub mut:
 	neutrality Neutrality = .neutral
 	state      CellState  = .empty
 	content    string
@@ -85,6 +85,12 @@ __global:
 	name   string
 	grid   [10][10]Cell = [10][10]Cell{init: [10]Cell{}}
 	cursor Cursor
+}
+
+// set_at_cursor changes the state of the cell at the cursor position.
+@[inline]
+pub fn (mut g Grid) set_at_cursor(state CellState) {
+	g.grid[g.cursor.y][g.cursor.x].state = state
 }
 
 // neutralize sets all the `Cell`s in the `Grid` to `Neutrality.neutral`.
