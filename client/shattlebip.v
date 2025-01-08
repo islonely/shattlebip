@@ -329,9 +329,6 @@ fn (mut game Game) move_cursor(direction tui.KeyCode, mut grid core.Grid, send_t
 fn frame(mut game Game) {
 	game.width, game.height = term.get_terminal_size()
 	game.tui.set_cursor_position(0, 0)
-	game.tui.reset()
-	game.tui.flush()
-	game.tui.clear()
 
 	_ := game.banner_text_channel.try_pop(mut game.banner_text)
 
@@ -342,6 +339,10 @@ fn frame(mut game Game) {
 		.my_turn { game.my_turn_frame() }
 		.their_turn { game.their_turn_frame() }
 	}
+
+	game.tui.reset()
+	game.tui.flush()
+	game.tui.clear()
 }
 
 // wait_for_enemy_ship_placement_frame draws the screen in the

@@ -75,7 +75,7 @@ pub fn (mut conn BufferedTcpConn) read_chunk(chunk_size int) ![]u8 {
 
 	// read more data from connection
 	mut buf := []u8{len: 1024}
-	len := conn.read(mut buf) or { return err }
+	len := conn.TcpConn.read(mut buf) or { return err }
 	conn.read_buffer << buf[..len]
 
 	// if buffer still does not have enough data return error
