@@ -8,7 +8,7 @@ import math
 import time
 
 const default_read_timeout = time.minute * 5
-const default_write_timeout = time.minute * 5
+const default_write_timeout = time.second * 10
 
 // Server handles everything related to player connections.
 @[heap]
@@ -35,7 +35,7 @@ mut:
 struct Game {
 	id string = rand.uuid_v4()
 mut:
-	states             shared []core.GameState
+	states             []core.GameState
 	players            []&PlayerTcpConn = []&PlayerTcpConn{}
 	handle_tcp_threads []thread
 	grids              []core.Grid = []core.Grid{}
@@ -61,8 +61,6 @@ fn main() {
 			socket.close() or {}
 			continue
 		}
-		socket.set_read_timeout(default_read_timeout)
-		socket.set_write_timeout(default_write_timeout)
 
 		println('[Server] new client (${socket.id}): ${client_addr}')
 		spawn server.handle_client(mut socket)
@@ -106,7 +104,7 @@ fn (mut g Game) gameplay(index int) {
 	for {
 		sz_msg := int(sizeof(core.Message))
 		raw_msg := player.read_chunk(sz_msg) or {
-			println('[Server] Failed to read bytes from client: ${err.msg()}')
+			println('[Server] Failed to read bytes from client (blocking: ${player.get_blocking()}): ${err.msg()}')
 			if err.code() == net.error_ewouldblock {
 				time.sleep(10 * time.millisecond)
 				continue
@@ -217,6 +215,16 @@ fn (mut server Server) dispose_of_ended_games() {
 
 // handle_client either queues players or pairs them for a game.
 fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
+	// connection settings
+	socket.set_blocking(true) or {
+		println('[Server] failed to set blocking to true. Closing connection.')
+		socket.close() or { println('[Server] failed to close connection: ${err.msg()}') }
+		return
+	}
+	socket.set_write_timeout(default_write_timeout)
+	socket.set_read_timeout(default_read_timeout)
+
+	// queue the player or start the game
 	if server.queue.len == 0 {
 		socket.writef(core.Message.added_player_to_queue.to_bytes()) or {
 			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
@@ -237,9 +245,7 @@ fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
 		}
 		g.players << foe
 		g.players << socket
-		lock g.states {
-			g.states = [.placing_ships, .placing_ships]
-		}
+		g.states = [.placing_ships, .placing_ships]
 
 		server.games[g.id] = g
 
