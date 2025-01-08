@@ -2,6 +2,7 @@ module main
 
 import core
 import net
+import time
 
 const server_host = '[::1]:1902'
 
@@ -11,22 +12,17 @@ fn (mut game Game) initiate_server_connection() {
 		game.menu.items[disconnect_idx].state = .unselected
 	}
 	game.banner_text_channel <- 'Initiating server connection.'
-	game.server = net.dial_tcp(server_host) or {
+	mut conn := net.dial_tcp(server_host) or {
 		game.banner_text_channel <- 'Failed to connect to server.'
 		if index := game.menu.find('Disconnect') {
 			game.menu.items[index].state = .disabled
 		}
 		return
 	}
+	game.server = core.BufferedTcpConn.new(mut conn)
 
-	if mut server := game.server {
-		server.set_read_timeout(default_read_timeout)
-		server.set_write_timeout(default_write_timeout)
-		server.set_blocking(true) or {
-			game.end(err.msg())
-			return
-		}
-	}
+	game.server.set_read_timeout(default_read_timeout)
+	game.server.set_write_timeout(default_write_timeout)
 
 	game.banner_text_channel <- 'Connected to server.'
 	game.connected() or {
@@ -37,23 +33,21 @@ fn (mut game Game) initiate_server_connection() {
 
 // connected handles the game logic after connecting to the server
 fn (mut game Game) connected() ! {
-	mut server := game.server or { return error('Connection to server lost.') }
-
 	for {
-		mut raw_msg := []u8{len: 4}
-		server.read(mut raw_msg) or {
-			game.banner_text_channel <- 'Failed to read bytes from server: ${err.msg()}'
-			continue
+		msg_sz := int(sizeof(core.Message))
+		raw_msg := game.server.read_chunk(msg_sz) or {
+			if err.code() == net.error_ewouldblock {
+				time.sleep(10 * time.millisecond)
+				continue
+			}
+			return err
 		}
 		if !core.Message.is_valid_bytes(raw_msg) {
-			game.banner_text_channel <- 'Invalid bytes received from server: ${raw_msg.str()}'
+			game.banner_text_channel <- 'invalid bytes received from server: ${raw_msg.str()}'
 			continue
 		}
 
-		msg := core.Message.from_bytes(raw_msg) or {
-			game.banner_text_channel <- 'Failed to convert bytes to enum Message: ${err.msg()}'
-			continue
-		}
+		msg := core.Message.from_bytes(raw_msg)!
 
 		if msg == .connection_terminated {
 			return
@@ -61,19 +55,19 @@ fn (mut game Game) connected() ! {
 
 		match game.state {
 			.main_menu {
-				game.connected_main_menu(msg, raw_msg)!
+				game.connected_main_menu(msg)!
 			}
 			.my_turn {
-				game.connected_my_turn(msg, raw_msg)!
+				game.connected_my_turn(msg)!
 			}
 			.placing_ships {
-				game.connected_placing_ships(msg, raw_msg)!
+				game.connected_placing_ships(msg)!
 			}
 			.their_turn {
-				game.connected_their_turn(msg, raw_msg)!
+				game.connected_their_turn(msg)!
 			}
 			.wait_for_enemy_ship_placement {
-				game.connected_wait_for_enemy_ship_placement(msg, raw_msg)!
+				game.connected_wait_for_enemy_ship_placement(msg)!
 			}
 		}
 	}
@@ -81,9 +75,7 @@ fn (mut game Game) connected() ! {
 
 // connected_main_menu handles the Messages received from the server during
 // the .main_menu state.
-fn (mut game Game) connected_main_menu(msg core.Message, raw_msg []u8) ! {
-	mut server := game.server or { return error('server not set') }
-
+fn (mut game Game) connected_main_menu(msg core.Message) ! {
 	match msg {
 		.added_player_to_queue {
 			game.banner_text_channel <- 'No players. Added to queue'
@@ -91,7 +83,8 @@ fn (mut game Game) connected_main_menu(msg core.Message, raw_msg []u8) ! {
 		.paired_with_player {
 			game.state = .placing_ships
 			game.banner_text_channel <- 'Press R to place your ships randomly'
-			core.Message.paired_with_player.write(mut server)!
+			game.write_message(core.Message.paired_with_player)!
+			game.server.flush()!
 		}
 		else {
 			return error('unexpected message: ${msg}')
@@ -101,7 +94,7 @@ fn (mut game Game) connected_main_menu(msg core.Message, raw_msg []u8) ! {
 
 // connected_my_turn handles the Messages received from the server during
 // the .my_turn state.
-fn (mut game Game) connected_my_turn(msg core.Message, raw_msg []u8) ! {
+fn (mut game Game) connected_my_turn(msg core.Message) ! {
 	match msg {
 		.set_cursor_pos {
 			game.read_cursor()
@@ -114,7 +107,7 @@ fn (mut game Game) connected_my_turn(msg core.Message, raw_msg []u8) ! {
 
 // connected_placing_ships handles the Messages received from the server during
 // the .placing_ships state.
-fn (mut game Game) connected_placing_ships(msg core.Message, raw_msg []u8) ! {
+fn (mut game Game) connected_placing_ships(msg core.Message) ! {
 	match msg {
 		.start_player {
 			game.us_starts_game = true
@@ -136,31 +129,24 @@ fn (mut game Game) connected_placing_ships(msg core.Message, raw_msg []u8) ! {
 
 // connected_their_turn handles the Messages received from the server during
 // the .their_turn state.
-fn (mut game Game) connected_their_turn(msg core.Message, raw_msg []u8) ! {
+fn (mut game Game) connected_their_turn(msg core.Message) ! {
 	match msg {
 		.set_cursor_pos {
 			game.read_cursor()
 		}
 		.attack_cell {
-			mut server := game.server or {
-				game.end('server connection interrupted: ${err.msg()}')
-				return
-			}
-
 			// get cursor pos
-			mut pos_bytes := []u8{len: int(sizeof(core.Pos))}
-			server.read(mut pos_bytes) or {
-				return error('failed to read bytes from server: ${err.msg()}')
-			}
+			pos_sz := int(sizeof(core.Pos))
+			pos_bytes := game.server.read_chunk(pos_sz)!
 			pos := unsafe { core.Pos.from_bytes(pos_bytes) }
 			game.enemy_grid.cursor.Pos = pos
 
 			// check if it's their turn
 			if game.state == .my_turn {
 				nyt_msg := core.Message.not_your_turn
-				nyt_msg.write(mut server) or {
-					return error('failed to write message (${nyt_msg}): ${err.msg()}')
-				}
+				game.write_message(nyt_msg)!
+				game.server.flush()!
+				return
 			}
 
 			// check cell status
@@ -171,6 +157,7 @@ fn (mut game Game) connected_their_turn(msg core.Message, raw_msg []u8) ! {
 				.submarine,
 				.destroyer,
 			]
+			// update cell state and send state to server
 			send_msg := if is_cell_occupied {
 				game.player_grid.grid[pos.y][pos.x].state = .hit
 				game.banner_text_channel <- 'Hit ${game.player_grid.cursor.val()}! Your turn.'
@@ -180,10 +167,8 @@ fn (mut game Game) connected_their_turn(msg core.Message, raw_msg []u8) ! {
 				game.banner_text_channel <- 'Miss. Your turn.'
 				core.Message.miss
 			}
-			send_msg.write(mut server) or {
-				game.end('failed to write message (${send_msg}): ${err.msg()}')
-				return
-			}
+			game.write_message(send_msg)!
+			game.server.flush()!
 
 			game.state = .my_turn
 		}
@@ -195,7 +180,7 @@ fn (mut game Game) connected_their_turn(msg core.Message, raw_msg []u8) ! {
 
 // connected_wait_for_enemy_ship_placement handles the Messages received
 // from the server during the .wait_for_enemy_ship_placement state.
-fn (mut game Game) connected_wait_for_enemy_ship_placement(msg core.Message, raw_msg []u8) ! {
+fn (mut game Game) connected_wait_for_enemy_ship_placement(msg core.Message) ! {
 	match msg {
 		.placed_ships {
 			game.has_enemy_placed_ships = true
@@ -211,4 +196,49 @@ fn (mut game Game) connected_wait_for_enemy_ship_placement(msg core.Message, raw
 			return error('unexpected message: ${msg}')
 		}
 	}
+}
+
+// read_message attempts to get a message from the server.
+fn (mut game Game) read_message() !core.Message {
+	msg_sz := int(sizeof(core.Message))
+	msg_bytes := game.server.read_chunk(msg_sz)!
+	if !core.Message.is_valid_bytes(msg_bytes) {
+		return .invalid_bytes
+	}
+
+	return core.Message.from_bytes(msg_bytes) or {
+		game.end(err.msg())
+		return .invalid_bytes
+	}
+}
+
+// write_message attempts to write a message to the server.
+@[inline]
+fn (mut game Game) write_message(msg core.Message) ! {
+	game.server.write(msg.to_bytes())
+}
+
+// write_cursor sends the position of the enemy cursor to the server.
+fn (mut game Game) write_cursor() {
+	pos_bytes := game.enemy_grid.cursor.Pos.to_bytes()
+	game.server.write(pos_bytes)
+	game.server.flush() or {
+		game.end(err.msg())
+		return
+	}
+}
+
+// read_cursor reads the position of the player cursor from the server.
+fn (mut game Game) read_cursor() {
+	pos_sz := int(sizeof(core.Pos))
+	pos_bytes := game.server.read_chunk(pos_sz) or {
+		if err.code() == net.error_ewouldblock {
+			time.sleep(10 * time.millisecond)
+			game.read_cursor()
+		}
+		game.banner_text_channel <- 'failed to read bytes from server: ${err.msg()}'
+		return
+	}
+	pos := unsafe { core.Pos.from_bytes(pos_bytes) }
+	game.player_grid.cursor.Pos = pos
 }

@@ -20,11 +20,7 @@ fn main() {
 	mut game := &Game{
 		width:  w
 		height: h
-		// logger: *log.new_thread_safe_log()
 	}
-	// lock game.logger {
-	// 	game.logger.set_output_path(log_file_path)
-	// }
 	game.tui = tui.init(
 		user_data:   game
 		event_fn:    event
@@ -83,7 +79,7 @@ mut:
 	menu                   Menu
 	banner_text            string      = '                          SHATTLEBIP                          '
 	banner_text_channel    chan string = chan string{cap: 100}
-	server                 ?&net.TcpConn
+	server                 core.BufferedTcpConn
 	network_thread         thread
 	// logger              shared log.ThreadSafeLog
 
@@ -118,36 +114,6 @@ fn (mut game Game) switch_state(state core.GameState, banner_text string) {
 	game.banner_text_channel <- banner_text
 }
 
-// write_cursor sends the position of the enemy cursor to the server.
-fn (mut game Game) write_cursor() {
-	mut server := game.server or {
-		game.end('server connection interrupted: ${err.msg()}')
-		return
-	}
-
-	pos_bytes := game.enemy_grid.cursor.Pos.to_bytes()
-	server.write(pos_bytes) or {
-		game.end('Failed to write bytes to server: ${err.msg()}')
-		return
-	}
-}
-
-// read_cursor reads the position of the player cursor from the server.
-fn (mut game Game) read_cursor() {
-	mut server := game.server or {
-		game.end('server connection interrupted: ${err.msg()}')
-		return
-	}
-
-	mut pos_bytes := []u8{len: int(sizeof(core.Pos))}
-	server.read(mut pos_bytes) or {
-		game.end('failed to read bytes from server: ${err.msg()}')
-		return
-	}
-	pos := unsafe { core.Pos.from_bytes(pos_bytes) }
-	game.player_grid.cursor.Pos = pos
-}
-
 // event passes an event to the respective function to be handled
 // based on the current game state.
 fn event(event &tui.Event, mut game Game) {
@@ -160,10 +126,18 @@ fn event(event &tui.Event, mut game Game) {
 			game.main_menu_event(event)
 		}
 		.my_turn {
-			game.my_turn_event(event)
+			game.my_turn_event(event) or {
+				if !(err.code() == net.error_ewouldblock) {
+					game.end(err.msg())
+				}
+			}
 		}
 		.placing_ships {
-			game.placing_ships_event(event)
+			game.placing_ships_event(event) or {
+				if !(err.code() == net.error_ewouldblock) {
+					game.end(err.msg())
+				}
+			}
 		}
 		.their_turn {
 			game.their_turn_event(event)
@@ -192,12 +166,7 @@ fn (mut game Game) main_menu_event(event &tui.Event) {
 
 // my_turn_event handles mouse, keyboard, and window events that
 // happen during the .my_turn state.
-fn (mut game Game) my_turn_event(event &tui.Event) {
-	mut server := game.server or {
-		game.end('connection to server interrupted')
-		return
-	}
-
+fn (mut game Game) my_turn_event(event &tui.Event) ! {
 	match event.typ {
 		.key_down {
 			match event.code {
@@ -206,15 +175,10 @@ fn (mut game Game) my_turn_event(event &tui.Event) {
 				}
 				.space {
 					msg := core.Message.attack_cell
-					msg.write(mut server) or {
-						game.end('failed to write to server (${msg}): ${err.msg}')
-						return
-					}
+					game.write_message(msg)!
 					game.write_cursor()
-					hit_or_miss := core.Message.read(mut server) or {
-						game.end('failed to read message: ${err.msg()}')
-						return
-					}
+					game.server.flush()!
+					hit_or_miss := game.read_message()!
 
 					match hit_or_miss {
 						.hit {
@@ -260,7 +224,7 @@ fn (mut game Game) their_turn_event(event &tui.Event) {
 
 // placing_ships_event handles mouse, keyboard, and window events
 // that happen during the .placing_ships state.
-fn (mut game Game) placing_ships_event(event &tui.Event) {
+fn (mut game Game) placing_ships_event(event &tui.Event) ! {
 	match event.typ {
 		.key_down {
 			match event.code {
@@ -282,15 +246,8 @@ fn (mut game Game) placing_ships_event(event &tui.Event) {
 						game.ship_needs_placed.pop()
 					}
 
-					mut server := game.server or {
-						game.end('connection to server interrupted')
-						return
-					}
-
-					core.Message.placed_ships.write(mut server) or {
-						game.end('failed to write message to server: ${err.msg()}')
-						return
-					}
+					game.write_message(.placed_ships)!
+					game.server.flush()!
 					if game.has_enemy_placed_ships {
 						if game.us_starts_game {
 							game.state = .my_turn
@@ -357,22 +314,24 @@ fn (mut game Game) move_cursor(direction tui.KeyCode, mut grid core.Grid, send_t
 	if !send_to_server {
 		return
 	}
-	mut server := game.server or {
-		game.end('connection interrupted')
-		return
-	}
-
-	core.Message.set_cursor_pos.write(mut server) or {
-		game.end('failed to write Message to server: ${err.msg()}')
+	game.write_message(.set_cursor_pos) or {
+		game.end(err.msg())
 		return
 	}
 	game.write_cursor()
+	game.server.flush() or {
+		game.end(err.msg())
+		return
+	}
 }
 
 // frame is what is drawn to the terminal UI each frame.
 fn frame(mut game Game) {
 	game.width, game.height = term.get_terminal_size()
 	game.tui.set_cursor_position(0, 0)
+	game.tui.reset()
+	game.tui.flush()
+	game.tui.clear()
 
 	_ := game.banner_text_channel.try_pop(mut game.banner_text)
 
@@ -383,11 +342,6 @@ fn frame(mut game Game) {
 		.my_turn { game.my_turn_frame() }
 		.their_turn { game.their_turn_frame() }
 	}
-
-	game.tui.set_cursor_position(0, 0)
-	game.tui.reset()
-	game.tui.flush()
-	game.tui.clear()
 }
 
 // wait_for_enemy_ship_placement_frame draws the screen in the
@@ -438,10 +392,7 @@ fn draw_text_center(mut game Game, text string) {
 // end ends a game and closes the connection to the server.
 fn (mut game Game) end(msg string) {
 	game.state = .main_menu
-	if mut server := game.server {
-		server.close() or {}
-		game.server = none
-	}
+	game.server.close() or {}
 	game.banner_text_channel <- msg
 	if index := game.menu.find('Disconnect') {
 		game.menu.items[index].state = .disabled

@@ -25,7 +25,7 @@ mut:
 // PlayerTcpConn is a TCP connection with an associated index in server queue.
 @[heap]
 pub struct PlayerTcpConn {
-	net.TcpConn
+	core.BufferedTcpConn
 mut:
 	id string = rand.uuid_v4()
 }
@@ -82,19 +82,13 @@ fn (mut g Game) start() {
 	}
 	end_player := math.abs(start_player - 1)
 
-	core.Message.start_player.write(mut g.players[start_player]) or {
-		println('[Server] Failed to write to player[${start_player}]: ${err.msg()}')
-		core.Message.connection_terminated.write(mut g.players[end_player]) or {
-			println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
-		}
+	g.players[start_player].writef(core.Message.start_player.to_bytes()) or {
+		println('[Server] failed to write to player[${start_player}]: ${err.msg()}')
 		g.end()
 		return
 	}
-	core.Message.not_start_player.write(mut g.players[end_player]) or {
+	g.players[end_player].writef(core.Message.not_start_player.to_bytes()) or {
 		println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
-		core.Message.connection_terminated.write(mut g.players[start_player]) or {
-			println('[Server] Failed to write to player[${start_player}]: ${err.msg()}')
-		}
 		g.end()
 		return
 	}
@@ -110,75 +104,68 @@ fn (mut g Game) gameplay(index int) {
 	mut enemy := g.players[math.abs(index - 1)]
 
 	for {
-		mut raw_msg := []u8{len: 4}
-		player.read(mut raw_msg) or {
-			println('[Server] failed to read bytes from client: ${err.msg()}')
+		sz_msg := int(sizeof(core.Message))
+		raw_msg := player.read_chunk(sz_msg) or {
+			println('[Server] Failed to read bytes from client: ${err.msg()}')
 			if err.code() == net.error_ewouldblock {
+				time.sleep(10 * time.millisecond)
 				continue
 			}
 			g.end()
 			return
 		}
-		msg := core.Message.from_bytes(raw_msg) or {
-			println('[Server] failed to convert bytes to Message: ${err.msg()}')
-			g.end()
-			return
-		}
+		msg := core.Message.from_bytes(raw_msg) or { core.Message.invalid_bytes }
 		match msg {
 			.attack_cell {
-				mut pos_bytes := []u8{len: int(sizeof(core.Pos))}
-				player.read(mut pos_bytes) or {
+				sz_pos := int(sizeof(core.Pos))
+				pos_bytes := player.read_chunk(sz_pos) or {
 					println('[Server] failed to read Pos data: ${err.msg()}')
 					g.end()
 					return
 				}
-				send_msg := core.Message.attack_cell
-				send_msg.write(mut enemy) or {
-					println('[Server] failed to write message ${send_msg}: ${err.msg()}')
+				enemy.write(core.Message.attack_cell.to_bytes())
+				enemy.write(pos_bytes)
+				enemy.flush() or {
+					println('[Server] Failed to flush bytes: ${err.msg()}')
 					g.end()
 					return
 				}
-				enemy.write(pos_bytes) or {
-					println('[Server] failed to write Pos data: ${err.msg()}')
+				hit_or_miss_bytes := enemy.read_chunk(sz_msg) or {
+					println('[Server] Failed to read Message: ${err.msg()}')
 					g.end()
 					return
 				}
-				hit_or_miss := core.Message.read(mut enemy) or {
-					println('[Server] failed to read message: ${err.msg()}')
-					g.end()
-					return
+				hit_or_miss := core.Message.from_bytes(hit_or_miss_bytes) or {
+					core.Message.invalid_bytes
 				}
 				if hit_or_miss !in [core.Message.hit, .miss, .not_your_turn] {
 					println('[Server] unexpected message: ${hit_or_miss}')
 					g.end()
 					return
 				}
-				hit_or_miss.write(mut player) or {
-					println('[Server] failed to write message (${hit_or_miss}): ${err.msg()}')
+				player.writef(hit_or_miss_bytes) or {
+					println('[Server] Failed to write to player: ${err.msg()}')
 					g.end()
 					return
 				}
 			}
 			.set_cursor_pos {
-				mut pos_bytes := []u8{len: int(sizeof(core.Pos))}
-				player.read(mut pos_bytes) or {
+				sz_pos := int(sizeof(core.Pos))
+				pos_bytes := player.read_chunk(sz_pos) or {
 					println('[Server] failed to read Pos data: ${err.msg()}')
 					g.end()
 					return
 				}
-				core.Message.set_cursor_pos.write(mut enemy) or {
-					println('[Server] failed to write Message: ${err.msg()}')
-					g.end()
-					return
-				}
-				enemy.write(pos_bytes) or {
-					println('[Server] failed to write pos bytes: ${err.msg()}')
+				enemy.write(raw_msg)
+				enemy.write(pos_bytes)
+				enemy.flush() or {
+					println('[Server] failed to flush to enemy: ${err.msg()}')
 					g.end()
 					return
 				}
 			}
 			.placed_ships {
-				msg.write(mut enemy) or {
+				enemy.writef(raw_msg) or {
 					println('[Server] failed to write message: ${err.msg()}')
 					g.end()
 					return
@@ -201,7 +188,9 @@ fn (mut g Game) gameplay(index int) {
 @[inline]
 fn (mut g Game) end() {
 	for mut player in g.players {
-		core.Message.connection_terminated.write(mut player) or {}
+		player.writef(core.Message.connection_terminated.to_bytes()) or {
+			println('[Server] Failed to write termination message: ${err.msg()}')
+		}
 	}
 	g.server.ended_games_chan <- g.id
 }
@@ -229,7 +218,7 @@ fn (mut server Server) dispose_of_ended_games() {
 // handle_client either queues players or pairs them for a game.
 fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
 	if server.queue.len == 0 {
-		core.Message.added_player_to_queue.write(mut socket) or {
+		socket.writef(core.Message.added_player_to_queue.to_bytes()) or {
 			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
 			return
 		}
@@ -254,14 +243,12 @@ fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
 
 		server.games[g.id] = g
 
-		core.Message.paired_with_player.write(mut foe) or {
+		socket.writef(core.Message.paired_with_player.to_bytes()) or {
 			println(term.bright_red('[Server]') + ' failed to write message: ${err.msg()}')
-			server.handle_client(mut socket)
 			return
 		}
-
-		core.Message.paired_with_player.write(mut socket) or {
-			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
+		foe.writef(core.Message.paired_with_player.to_bytes()) or {
+			println(term.bright_red('[Server]') + ' failed to write message: ${err.msg()}')
 			return
 		}
 		g.start()
