@@ -9,7 +9,7 @@ import net
 pub struct BufferedTcpConn {
 	net.TcpConn
 pub mut:
-	read_buffer  []u8
+	read_buffer  []u8 = []u8{cap: 1024}
 	write_buffer []u8 = []u8{cap: 1024}
 __global:
 	// the amount of bytes that will be sent across the connection at one time
@@ -21,9 +21,11 @@ __global:
 // TCP connection.
 @[inline]
 pub fn BufferedTcpConn.new(mut conn net.TcpConn) &BufferedTcpConn {
-	return &BufferedTcpConn{
+	mut bufconn := &BufferedTcpConn{
 		TcpConn: conn
 	}
+
+	return bufconn
 }
 
 // write adds the provided bytes to the buffer.
@@ -44,16 +46,18 @@ pub fn (mut conn BufferedTcpConn) writef(bytes []u8) !int {
 // flush sends the buffer contents to the TCP connection.
 pub fn (mut conn BufferedTcpConn) flush() ! {
 	if packet_size := conn.packet_size {
-		for i := 0; i < conn.write_buffer.len; i += packet_size {
+		for conn.write_buffer.len > 0 {
 			sz := if conn.write_buffer.len < packet_size {
 				conn.write_buffer.len
 			} else {
 				packet_size
 			}
-			conn.TcpConn.write(conn.write_buffer[i..i + sz])!
+			conn.TcpConn.write(conn.write_buffer[0..sz])!
+			conn.write_buffer = conn.write_buffer[sz..]
 		}
 	} else {
 		conn.TcpConn.write(conn.write_buffer)!
+		conn.write_buffer = []u8{cap: 1024}
 	}
 }
 

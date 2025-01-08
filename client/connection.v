@@ -87,7 +87,7 @@ fn (mut game Game) connected_main_menu(msg core.Message) ! {
 			game.server.flush()!
 		}
 		else {
-			return error('unexpected message: ${msg}')
+			return error('${game.state} unexpected message: ${msg}')
 		}
 	}
 }
@@ -100,7 +100,7 @@ fn (mut game Game) connected_my_turn(msg core.Message) ! {
 			game.read_cursor()
 		}
 		else {
-			return error('unexpected message: ${msg}')
+			return error('${game.state} unexpected message: ${msg}')
 		}
 	}
 }
@@ -122,7 +122,7 @@ fn (mut game Game) connected_placing_ships(msg core.Message) ! {
 			game.has_enemy_placed_ships = true
 		}
 		else {
-			return error('unexpected message: ${msg}')
+			return error('${game.state} unexpected message: ${msg}')
 		}
 	}
 }
@@ -173,7 +173,7 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 			game.state = .my_turn
 		}
 		else {
-			return error('unexpected message: ${msg}')
+			return error('${game.state} unexpected message: ${msg}')
 		}
 	}
 }
@@ -193,7 +193,7 @@ fn (mut game Game) connected_wait_for_enemy_ship_placement(msg core.Message) ! {
 			}
 		}
 		else {
-			return error('unexpected message: ${msg}')
+			return error('${game.state} unexpected message: ${msg}')
 		}
 	}
 }
