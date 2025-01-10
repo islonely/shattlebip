@@ -20,7 +20,6 @@ fn (mut game Game) initiate_server_connection() {
 		return
 	}
 	game.server = core.BufferedTcpConn.new(mut conn)
-
 	game.server.set_read_timeout(default_read_timeout)
 	game.server.set_write_timeout(default_write_timeout)
 
@@ -139,7 +138,7 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 			pos_sz := int(sizeof(core.Pos))
 			pos_bytes := game.server.read_chunk(pos_sz)!
 			pos := unsafe { core.Pos.from_bytes(pos_bytes) }
-			game.enemy_grid.cursor.Pos = pos
+			game.player_grid.cursor.Pos = pos
 
 			// check if it's their turn
 			if game.state == .my_turn {
