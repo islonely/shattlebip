@@ -120,6 +120,7 @@ fn event(event &tui.Event, mut game Game) {
 	if event.typ == .key_down && event.code == .escape {
 		exit(0)
 	}
+	game.tui.clear()
 
 	match game.state {
 		.main_menu {
@@ -342,7 +343,6 @@ fn frame(mut game Game) {
 
 	game.tui.reset()
 	game.tui.flush()
-	game.tui.clear()
 }
 
 // wait_for_enemy_ship_placement_frame draws the screen in the
