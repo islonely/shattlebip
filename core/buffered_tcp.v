@@ -1,6 +1,7 @@
 module core
 
 import net
+import time
 
 // BufferedTcpConn is a TCP connection that allows you to
 // buffer data that is read/written instead of waiting on
@@ -68,8 +69,8 @@ pub fn (mut conn BufferedTcpConn) read(mut buf []u8) !int {
 	return bytes.len
 }
 
-// read_chunk reads `chunk_size` amount of data from the buffer.
-pub fn (mut conn BufferedTcpConn) read_chunk(chunk_size int) ![]u8 {
+// must_read_chunk reads `chunk_size` amount of data from the buffer.
+pub fn (mut conn BufferedTcpConn) must_read_chunk(chunk_size int) ![]u8 {
 	// if buffer has enough data read from buffer
 	if conn.read_buffer.len >= chunk_size {
 		chunk := conn.read_buffer[..chunk_size].clone()
@@ -84,10 +85,25 @@ pub fn (mut conn BufferedTcpConn) read_chunk(chunk_size int) ![]u8 {
 
 	// if buffer still does not have enough data return error
 	if conn.read_buffer.len < chunk_size {
-		return error('not enough data')
+		return error_with_code('not enough data', net.error_eagain)
 	}
 
 	chunk := conn.read_buffer[..chunk_size].clone()
 	conn.read_buffer = conn.read_buffer[chunk_size..]
 	return chunk
+}
+
+// read_chunk reads `chunk_size` amount of data from the buffer and
+// retries until data is available or a connection error occurs.
+pub fn (mut conn BufferedTcpConn) read_chunk(chunk_size int) ![]u8 {
+	for {
+		return conn.must_read_chunk(chunk_size) or {
+			if err.code() in [net.error_ewouldblock, net.error_eagain] {
+				time.sleep(10 * time.millisecond)
+				continue
+			}
+			return err
+		}
+	}
+	return error(@LOCATION + ': this should never happen')
 }

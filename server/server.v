@@ -104,11 +104,7 @@ fn (mut g Game) gameplay(index int) {
 	for {
 		sz_msg := int(sizeof(core.Message))
 		raw_msg := player.read_chunk(sz_msg) or {
-			println('[Server] Failed to read bytes from client (blocking: ${player.get_blocking()}): ${err.msg()}')
-			if err.code() == net.error_ewouldblock {
-				time.sleep(10 * time.millisecond)
-				continue
-			}
+			println('[Server] Failed to read bytes from client: ${err.msg()}')
 			g.end()
 			return
 		}
@@ -216,11 +212,6 @@ fn (mut server Server) dispose_of_ended_games() {
 // handle_client either queues players or pairs them for a game.
 fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
 	// connection settings
-	socket.set_blocking(true) or {
-		println('[Server] failed to set blocking to true. Closing connection.')
-		socket.close() or { println('[Server] failed to close connection: ${err.msg()}') }
-		return
-	}
 	socket.set_write_timeout(default_write_timeout)
 	socket.set_read_timeout(default_read_timeout)
 
