@@ -3,6 +3,7 @@ module main
 import term.ui as tui
 import term
 import rand
+import log
 import net
 import core
 import util
@@ -81,7 +82,7 @@ mut:
 	banner_text_channel    chan string = chan string{cap: 100}
 	server                 core.BufferedTcpConn
 	network_thread         thread
-	// logger              shared log.ThreadSafeLog
+	logger                 shared log.ThreadSafeLog
 
 	player_grid core.Grid = core.Grid{
 		name:           'Player'
@@ -109,9 +110,12 @@ fn (mut game Game) draw_banner() {
 
 // switch_state sets the game to the specified state. And sets the banner text
 // to the specified text. As well as flushed and clears the terminal UI.
-fn (mut game Game) switch_state(state core.GameState, banner_text string) {
+fn (mut game Game) switch_state(state core.GameState, banner_text ?string) {
+	game.tui.clear()
 	game.state = state
-	game.banner_text_channel <- banner_text
+	if text := banner_text {
+		game.banner_text_channel <- text
+	}
 }
 
 // event passes an event to the respective function to be handled
@@ -198,7 +202,7 @@ fn (mut game Game) my_turn_event(event &tui.Event) ! {
 							return
 						}
 					}
-					game.state = .their_turn
+					game.switch_state(.their_turn, none)
 				}
 				else {}
 			}
@@ -251,17 +255,14 @@ fn (mut game Game) placing_ships_event(event &tui.Event) ! {
 					game.server.flush()!
 					if game.has_enemy_placed_ships {
 						if game.us_starts_game {
-							game.state = .my_turn
-							game.banner_text_channel <- 'Game Start! Your turn first.'
+							game.switch_state(.my_turn, 'Game Start! Your turn first.')
 						} else {
-							game.state = .their_turn
-							game.banner_text_channel <- 'Game Start! Their turn first.'
+							game.switch_state(.their_turn, 'Game Start! Their turn first.')
 						}
 						return
 					}
 
-					game.state = .wait_for_enemy_ship_placement
-					game.banner_text_channel <- 'waiting for enemy to place their ships'
+					game.switch_state(.wait_for_enemy_ship_placement, 'Waiting for opponent to place their ships.')
 				}
 				.left, .right, .up, .down {
 					game.move_cursor(event.code, mut game.player_grid, false)
@@ -392,7 +393,7 @@ fn draw_text_center(mut game Game, text string) {
 
 // end ends a game and closes the connection to the server.
 fn (mut game Game) end(msg string) {
-	game.state = .main_menu
+	game.switch_state(.main_menu, none)
 	game.server.close() or {}
 	game.banner_text_channel <- msg
 	if index := game.menu.find('Disconnect') {

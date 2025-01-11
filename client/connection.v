@@ -80,8 +80,7 @@ fn (mut game Game) connected_main_menu(msg core.Message) ! {
 			game.banner_text_channel <- 'No players. Added to queue'
 		}
 		.paired_with_player {
-			game.state = .placing_ships
-			game.banner_text_channel <- 'Press R to place your ships randomly'
+			game.switch_state(.placing_ships, 'Press R to place your ships randomly')
 			game.write_message(core.Message.paired_with_player)!
 			game.server.flush()!
 		}
@@ -169,7 +168,7 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 			game.write_message(send_msg)!
 			game.server.flush()!
 
-			game.state = .my_turn
+			game.switch_state(.my_turn, none)
 		}
 		else {
 			return error('${game.state} unexpected message: ${msg}')
@@ -184,11 +183,9 @@ fn (mut game Game) connected_wait_for_enemy_ship_placement(msg core.Message) ! {
 		.placed_ships {
 			game.has_enemy_placed_ships = true
 			if game.us_starts_game {
-				game.state = .my_turn
-				game.banner_text_channel <- 'Game start! Your turn first.'
+				game.switch_state(.my_turn, 'Game start! Your turn first.')
 			} else {
-				game.state = .their_turn
-				game.banner_text_channel <- 'Game start! Their turn first.'
+				game.switch_state(.their_turn, 'Game start! Their turn first.')
 			}
 		}
 		else {
