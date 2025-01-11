@@ -4,7 +4,7 @@ import core
 import net
 import time
 
-const server_host = '[::1]:1902'
+const server_host = '127.0.0.1:1902'
 
 // initiate_server_connection tries to connect to the server.
 fn (mut game Game) initiate_server_connection() {

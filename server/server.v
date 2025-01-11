@@ -254,8 +254,8 @@ fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
 
 // init sets up the server and and loads config files.
 fn (mut server Server) init() ! {
-	server.listener = net.listen_tcp(.ip6, '[::1]:1902') or {
-		return error('failed to listen on [::1]:1902')
+	server.listener = net.listen_tcp(.ip, '127.0.0.1:1902') or {
+		return error('failed to listen on 127.0.0.1:1902')
 	}
 	laddr := server.listener.addr()!
 	println('[Server] Listen on ${laddr} ...')
