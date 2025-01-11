@@ -181,11 +181,6 @@ fn (mut g Game) gameplay(index int) {
 // end push the Game.id to the channel for the server to handle.
 @[inline]
 fn (mut g Game) end() {
-	for mut player in g.players {
-		player.writef(core.Message.connection_terminated.to_bytes()) or {
-			println('[Server] Failed to write termination message: ${err.msg()}')
-		}
-	}
 	g.server.ended_games_chan <- g.id
 }
 
@@ -212,6 +207,10 @@ fn (mut server Server) dispose_of_ended_games() {
 // handle_client either queues players or pairs them for a game.
 fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
 	// connection settings
+	socket.sock.set_option_bool(.keep_alive, true) or {
+		println('[Server] Failed to set socket to keep alive. Cannot continue. Rejecting connection.')
+		return
+	}
 	socket.set_write_timeout(default_write_timeout)
 	socket.set_read_timeout(default_read_timeout)
 

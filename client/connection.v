@@ -20,6 +20,9 @@ fn (mut game Game) initiate_server_connection() {
 		return
 	}
 	game.server = core.BufferedTcpConn.new(mut conn)
+	game.server.sock.set_option_bool(.keep_alive, true) or {
+		game.end('Could not set socket to keep alive: ${err}')
+	}
 	game.server.set_read_timeout(default_read_timeout)
 	game.server.set_write_timeout(default_write_timeout)
 
