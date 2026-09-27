@@ -29,9 +29,9 @@ pub fn BufferedTcpConn.new(mut conn net.TcpConn) &BufferedTcpConn {
 	return bufconn
 }
 
-// write adds the provided bytes to the buffer.
+// write_buffered adds the provided bytes to the buffer.
 @[inline]
-pub fn (mut conn BufferedTcpConn) write(bytes []u8) int {
+pub fn (mut conn BufferedTcpConn) write_buffered(bytes []u8) int {
 	conn.write_buffer << bytes
 	return bytes.len
 }
@@ -39,7 +39,7 @@ pub fn (mut conn BufferedTcpConn) write(bytes []u8) int {
 // writef adds the data to the buffer and flushes to the TCP connection.
 @[inline]
 pub fn (mut conn BufferedTcpConn) writef(bytes []u8) !int {
-	len := conn.write(bytes)
+	len := conn.write_buffered(bytes)
 	conn.flush()!
 	return len
 }
@@ -62,8 +62,8 @@ pub fn (mut conn BufferedTcpConn) flush() ! {
 	}
 }
 
-// read reads data into the provided buffer.
-pub fn (mut conn BufferedTcpConn) read(mut buf []u8) !int {
+// read_buffered reads data into the provided buffer.
+pub fn (mut conn BufferedTcpConn) read_buffered(mut buf []u8) !int {
 	bytes := conn.read_chunk(buf.len)!
 	unsafe { vmemcpy(buf.data, bytes.data, bytes.len) }
 	return bytes.len

@@ -15,7 +15,7 @@ const default_write_timeout = time.second * 10
 struct Server {
 mut:
 	listener net.TcpListener
-	queue    shared []&PlayerTcpConn = []&PlayerTcpConn{}
+	queue    []&PlayerTcpConn
 	games    map[string]&Game
 	// receives the uuid of the game being played
 	ended_games_chan   chan string
@@ -36,7 +36,7 @@ struct Game {
 	id string = rand.uuid_v4()
 mut:
 	states             []core.GameState
-	players            []&PlayerTcpConn = []&PlayerTcpConn{}
+	players            []&PlayerTcpConn
 	handle_tcp_threads []thread
 	grids              []core.Grid = []core.Grid{}
 	server             &Server
@@ -50,10 +50,13 @@ fn main() {
 	}
 	server.clean_games_thread = spawn server.dispose_of_ended_games()
 	for {
+		accepted := server.listener.accept() or {
+			println(term.bright_red('[Server] ') + 'Failed to start listener: ${err.msg()}')
+			exit(1)
+		}
 		mut socket := &PlayerTcpConn{
-			TcpConn: server.listener.accept() or {
-				println(term.bright_red('[Server] ') + 'Failed to start listener: ${err.msg()}')
-				exit(1)
+			BufferedTcpConn: core.BufferedTcpConn{
+				TcpConn: accepted
 			}
 		}
 		client_addr := socket.peer_addr() or {
@@ -63,7 +66,7 @@ fn main() {
 		}
 
 		println('[Server] new client (${socket.id}): ${client_addr}')
-		spawn server.handle_client(mut socket)
+		spawn server.handle_client(socket)
 	}
 
 	server.listener.close() or { eprintln('[Server] Failed to close TCP listener:\n${err.msg()}.') }
@@ -117,31 +120,16 @@ fn (mut g Game) gameplay(index int) {
 					g.end()
 					return
 				}
-				enemy.write(core.Message.attack_cell.to_bytes())
-				enemy.write(pos_bytes)
+				enemy.write_buffered(core.Message.attack_cell.to_bytes())
+				enemy.write_buffered(pos_bytes)
 				enemy.flush() or {
 					println('[Server] Failed to flush bytes: ${err.msg()}')
 					g.end()
 					return
 				}
-				hit_or_miss_bytes := enemy.read_chunk(sz_msg) or {
-					println('[Server] Failed to read Message: ${err.msg()}')
-					g.end()
-					return
-				}
-				hit_or_miss := core.Message.from_bytes(hit_or_miss_bytes) or {
-					core.Message.invalid_bytes
-				}
-				if hit_or_miss !in [core.Message.hit, .miss, .not_your_turn] {
-					println('[Server] unexpected message: ${hit_or_miss}')
-					g.end()
-					return
-				}
-				player.writef(hit_or_miss_bytes) or {
-					println('[Server] Failed to write to player: ${err.msg()}')
-					g.end()
-					return
-				}
+				// The opponent's own gameplay thread reads their reply and
+				// forwards it back to us. Do NOT read from `enemy` here:
+				// two threads reading one socket is the race that ends games.
 			}
 			.set_cursor_pos {
 				sz_pos := int(sizeof(core.Pos))
@@ -150,8 +138,8 @@ fn (mut g Game) gameplay(index int) {
 					g.end()
 					return
 				}
-				enemy.write(raw_msg)
-				enemy.write(pos_bytes)
+				enemy.write_buffered(raw_msg)
+				enemy.write_buffered(pos_bytes)
 				enemy.flush() or {
 					println('[Server] failed to flush to enemy: ${err.msg()}')
 					g.end()
@@ -161,6 +149,15 @@ fn (mut g Game) gameplay(index int) {
 			.placed_ships {
 				enemy.writef(raw_msg) or {
 					println('[Server] failed to write message: ${err.msg()}')
+					g.end()
+					return
+				}
+			}
+			.hit, .miss, .not_your_turn {
+				// This thread owns the player who answered an attack, so
+				// forward their reply to the opponent (the attacker).
+				enemy.writef(raw_msg) or {
+					println('[Server] failed to write reply: ${err.msg()}')
 					g.end()
 					return
 				}
@@ -205,7 +202,10 @@ fn (mut server Server) dispose_of_ended_games() {
 }
 
 // handle_client either queues players or pairs them for a game.
-fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
+fn (mut server Server) handle_client(raw_socket &PlayerTcpConn) {
+	// V 0.5.2 corrupts a spawned method's `mut &T` argument, so take an
+	// immutable pointer and reborrow it as mutable for this thread.
+	mut socket := unsafe { &PlayerTcpConn(raw_socket) }
 	// connection settings
 	socket.sock.set_option_bool(.keep_alive, true) or {
 		println('[Server] Failed to set socket to keep alive. Cannot continue. Rejecting connection.')
@@ -221,18 +221,14 @@ fn (mut server Server) handle_client(mut socket PlayerTcpConn) {
 			return
 		}
 
-		lock server.queue {
-			server.queue << socket
-		}
+		server.queue << socket
 	} else {
 		mut g := &Game{
 			server: server
 		}
-		mut foe := unsafe { &PlayerTcpConn(nil) }
-		lock server.queue {
-			foe = server.queue.first()
-			server.queue.delete(0)
-		}
+		mut foe := &PlayerTcpConn{}
+		foe = server.queue.first()
+		server.queue.delete(0)
 		g.players << foe
 		g.players << socket
 		g.states = [.placing_ships, .placing_ships]
@@ -263,16 +259,12 @@ fn (mut server Server) init() ! {
 // unqueue removes a player from the queue of connections waiting to join a game.
 fn (mut server Server) unqueue(id string) {
 	mut index := -1
-	rlock server.queue {
-		for i, conn in server.queue {
-			if conn.id == id {
-				index = i
-			}
+	for i, conn in server.queue {
+		if conn.id == id {
+			index = i
 		}
 	}
 	if _likely_(index != -1) {
-		lock server.queue {
-			server.queue.delete(index)
-		}
+		server.queue.delete(index)
 	}
 }

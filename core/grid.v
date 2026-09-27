@@ -124,8 +124,7 @@ pub fn (g Grid) str() string {
 	name_len := g.name.len + prefix.len
 	padding := if g.max_banner_len >= name_len { 0 } else { (g.max_banner_len - g.name.len) / 2 }
 	// grid_bldr.write_string(merge_strings('', '', padding, name))
-	grid_bldr.writeln(util.merge_strings('', '', padding, name) + '_'.repeat(g.len - name_len - 1) +
-		' ')
+	grid_bldr.writeln(util.merge_strings('', '', padding, name) + '_'.repeat(g.len - name_len - 1) + ' ')
 	grid_bldr.write_string('|    ')
 	for i in 0 .. 10 {
 		grid_bldr.write_string(' ${i}')
@@ -141,16 +140,22 @@ pub fn (g Grid) str() string {
 	grid_bldr.write_string('  |\n')
 	for y, row in g.grid {
 		// draws the grid container and letter: "| A "
-		grid_bldr.write_string('| ${u8(y + 65).ascii_str()} ' +
-			if y == g.cursor.y { g.cursor.color('>') } else { ' ' })
+		grid_bldr.write_string('| ${u8(y + 65).ascii_str()} ' + if y == g.cursor.y {
+			g.cursor.color('>')
+		} else {
+			' '
+		})
 
 		// draws "|_" back to back to form row in grid
 		for x, cell in row {
 			last_cell := if x == 0 { cell } else { g.grid[y][x - 1] }
 			// line before cursor
 			if y == g.cursor.y - 1 && x == g.cursor.x {
-				grid_bldr.write_string(term.bright_blue('|') +
-					if cell.state == .empty { g.cursor.color('_') } else { cell_pictograph[cell.state.str()] })
+				grid_bldr.write_string(term.bright_blue('|') + if cell.state == .empty {
+					g.cursor.color('_')
+				} else {
+					cell_pictograph[cell.state.str()]
+				})
 			}
 			// location of cursor
 			else if y == g.cursor.y && x == g.cursor.x && cell.state == .empty {
@@ -160,8 +165,11 @@ pub fn (g Grid) str() string {
 			}
 			// last line and cursor column
 			else if x == g.cursor.x && y == 9 {
-				grid_bldr.write_string(term.bright_blue('|') +
-					if cell.state == .empty { g.cursor.color('_') } else { cell_pictograph[cell.state.str()] })
+				grid_bldr.write_string(term.bright_blue('|') + if cell.state == .empty {
+					g.cursor.color('_')
+				} else {
+					cell_pictograph[cell.state.str()]
+				})
 			}
 			// Cell.neutrality is .good
 			else if cell.neutrality == .good {

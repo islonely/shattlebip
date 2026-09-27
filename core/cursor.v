@@ -12,7 +12,7 @@ pub struct Cursor {
 	Pos
 __global:
 	color    fn (string) string = cursor_color
-	selected Pos                = Pos.null()
+	selected Pos                = Pos{-1, -1}
 	history  []Pos              = []Pos{cap: 200}
 }
 

@@ -23,8 +23,8 @@ fn test_buffered_tcp() {
 	mut conn := net.dial_tcp('127.0.0.1:${port}')!
 	mut server := core.BufferedTcpConn.new(mut conn)
 	server.writef(Message.terminate_connection.to_bytes())!
-	server.write(Message.set_cursor_pos.to_bytes())
-	server.write(core.Pos{5, 8}.to_bytes())
+	server.write_buffered(Message.set_cursor_pos.to_bytes())
+	server.write_buffered(core.Pos{5, 8}.to_bytes())
 	server.flush()!
 	listener.close() or {}
 	server.close() or {}

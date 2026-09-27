@@ -100,10 +100,34 @@ fn (mut game Game) connected_my_turn(msg core.Message) ! {
 		.set_cursor_pos {
 			game.read_cursor()
 		}
+		.hit, .miss, .not_your_turn {
+			game.handle_attack_reply(msg)
+		}
 		else {
 			return error('${game.state} unexpected message: ${msg}')
 		}
 	}
+}
+
+// handle_attack_reply applies the server's response to the player's own
+// last attack. It is handled by the network thread, the only socket reader.
+fn (mut game Game) handle_attack_reply(msg core.Message) {
+	pos := game.last_attack_pos
+	match msg {
+		.hit {
+			game.enemy_grid.grid[pos.y][pos.x].state = .hit
+			game.banner_text_channel <- 'Hit ${game.enemy_grid.cursor.val()}! Their turn.'
+		}
+		.miss {
+			game.enemy_grid.grid[pos.y][pos.x].state = .miss
+			game.banner_text_channel <- 'Miss. Their turn.'
+		}
+		.not_your_turn {
+			game.banner_text_channel <- "It's not your turn."
+		}
+		else {}
+	}
+	game.switch_state(.their_turn, none)
 }
 
 // connected_placing_ships handles the Messages received from the server during
@@ -134,6 +158,9 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 	match msg {
 		.set_cursor_pos {
 			game.read_cursor()
+		}
+		.hit, .miss, .not_your_turn {
+			game.handle_attack_reply(msg)
 		}
 		.attack_cell {
 			// get cursor pos
@@ -197,30 +224,16 @@ fn (mut game Game) connected_wait_for_enemy_ship_placement(msg core.Message) ! {
 	}
 }
 
-// read_message attempts to get a message from the server.
-fn (mut game Game) read_message() !core.Message {
-	msg_sz := int(sizeof(core.Message))
-	msg_bytes := game.server.read_chunk(msg_sz)!
-	if !core.Message.is_valid_bytes(msg_bytes) {
-		return .invalid_bytes
-	}
-
-	return core.Message.from_bytes(msg_bytes) or {
-		game.end(err.msg())
-		return .invalid_bytes
-	}
-}
-
 // write_message attempts to write a message to the server.
 @[inline]
 fn (mut game Game) write_message(msg core.Message) ! {
-	game.server.write(msg.to_bytes())
+	game.server.write_buffered(msg.to_bytes())
 }
 
 // write_cursor sends the position of the enemy cursor to the server.
 fn (mut game Game) write_cursor() {
 	pos_bytes := game.enemy_grid.cursor.Pos.to_bytes()
-	game.server.write(pos_bytes)
+	game.server.write_buffered(pos_bytes)
 	game.server.flush() or {
 		game.end(err.msg())
 		return

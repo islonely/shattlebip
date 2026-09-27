@@ -75,14 +75,18 @@ mut:
 	state                  core.GameState = .main_menu
 	has_enemy_placed_ships bool
 	us_starts_game         bool
-	ship_needs_placed      []core.CellState = [.carrier, .battleship, .cruiser, .submarine, .destroyer]
+	ship_needs_placed      []core.CellState = [.carrier, .battleship, .cruiser, .submarine,
+		.destroyer]
 	ship_rotated           bool
 	menu                   Menu
 	banner_text            string      = '                          SHATTLEBIP                          '
-	banner_text_channel    chan string = chan string{cap: 100}
+	banner_text_channel    chan string = chan string{ cap: 100 }
 	server                 core.BufferedTcpConn
 	network_thread         thread
 	logger                 shared log.ThreadSafeLog
+	// cell the player most recently fired at; used to place the reply
+	// because the cursor may move while waiting for it.
+	last_attack_pos core.Pos
 
 	player_grid core.Grid = core.Grid{
 		name:           'Player'
@@ -179,29 +183,14 @@ fn (mut game Game) my_turn_event(event &tui.Event) ! {
 					game.move_cursor(event.code, mut game.enemy_grid, true)
 				}
 				.space {
+					// Only send here. The server reply (hit/miss) is read by
+					// the single network thread to avoid two threads reading
+					// the same socket.
+					game.last_attack_pos = game.enemy_grid.cursor.Pos
 					msg := core.Message.attack_cell
 					game.write_message(msg)!
 					game.write_cursor()
 					game.server.flush()!
-					hit_or_miss := game.read_message()!
-
-					match hit_or_miss {
-						.hit {
-							game.enemy_grid.set_at_cursor(core.CellState.hit)
-							game.banner_text_channel <- 'Hit ${game.enemy_grid.cursor.val()}! Their turn.'
-						}
-						.miss {
-							game.enemy_grid.set_at_cursor(core.CellState.miss)
-							game.banner_text_channel <- 'Miss. Their turn.'
-						}
-						.not_your_turn {
-							game.banner_text_channel <- "It's not your turn."
-						}
-						else {
-							game.end('unexpected message: ${hit_or_miss}')
-							return
-						}
-					}
 					game.switch_state(.their_turn, none)
 				}
 				else {}
