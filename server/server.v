@@ -40,7 +40,30 @@ mut:
 pub struct PlayerTcpConn {
 	core.BufferedTcpConn
 mut:
-	id string = rand.uuid_v4()
+	id          string      = rand.uuid_v4()
+	write_mutex &sync.Mutex = sync.new_mutex()
+}
+
+// send writes a chunk and flushes it while holding this connection's lock,
+// so two gameplay threads cannot interleave a message.
+fn (mut p PlayerTcpConn) send(bytes []u8) ! {
+	p.write_mutex.lock()
+	defer {
+		p.write_mutex.unlock()
+	}
+	p.write_buffered(bytes)
+	p.flush()!
+}
+
+// send_pair writes two chunks and flushes them under the connection lock.
+fn (mut p PlayerTcpConn) send_pair(first []u8, second []u8) ! {
+	p.write_mutex.lock()
+	defer {
+		p.write_mutex.unlock()
+	}
+	p.write_buffered(first)
+	p.write_buffered(second)
+	p.flush()!
 }
 
 // Game is the game that two players are currently playing.
@@ -102,11 +125,11 @@ fn (mut g Game) start() {
 // first. Rematch rounds first ask both clients to reset their boards.
 fn (mut g Game) begin_round(is_rematch bool) {
 	if is_rematch {
-		g.players[0].writef(core.Message.rematch_start.to_bytes()) or {
+		g.players[0].send(core.Message.rematch_start.to_bytes()) or {
 			g.end()
 			return
 		}
-		g.players[1].writef(core.Message.rematch_start.to_bytes()) or {
+		g.players[1].send(core.Message.rematch_start.to_bytes()) or {
 			g.end()
 			return
 		}
@@ -128,12 +151,12 @@ fn (mut g Game) begin_round(is_rematch bool) {
 	end_player := math.abs(start_player - 1)
 	g.set_turn(start_player)
 
-	g.players[start_player].writef(core.Message.start_player.to_bytes()) or {
+	g.players[start_player].send(core.Message.start_player.to_bytes()) or {
 		println('[Server] failed to write to player[${start_player}]: ${err.msg()}')
 		g.end()
 		return
 	}
-	g.players[end_player].writef(core.Message.not_start_player.to_bytes()) or {
+	g.players[end_player].send(core.Message.not_start_player.to_bytes()) or {
 		println('[Server] Failed to write to player[${end_player}]: ${err.msg()}')
 		g.end()
 		return
@@ -164,15 +187,13 @@ fn (mut g Game) gameplay(index int) {
 				}
 				// the server decides whose turn it is; ignore out-of-turn attacks
 				if !g.is_turn(index) {
-					player.writef(core.Message.not_your_turn.to_bytes()) or {
+					player.send(core.Message.not_your_turn.to_bytes()) or {
 						g.end()
 						return
 					}
 					continue
 				}
-				enemy.write_buffered(core.Message.attack_cell.to_bytes())
-				enemy.write_buffered(pos_bytes)
-				enemy.flush() or {
+				enemy.send_pair(core.Message.attack_cell.to_bytes(), pos_bytes) or {
 					println('[Server] Failed to flush bytes: ${err.msg()}')
 					g.end()
 					return
@@ -188,16 +209,14 @@ fn (mut g Game) gameplay(index int) {
 					g.end()
 					return
 				}
-				enemy.write_buffered(raw_msg)
-				enemy.write_buffered(pos_bytes)
-				enemy.flush() or {
+				enemy.send_pair(raw_msg, pos_bytes) or {
 					println('[Server] failed to flush to enemy: ${err.msg()}')
 					g.end()
 					return
 				}
 			}
 			.placed_ships {
-				enemy.writef(raw_msg) or {
+				enemy.send(raw_msg) or {
 					println('[Server] failed to write message: ${err.msg()}')
 					g.end()
 					return
@@ -208,7 +227,7 @@ fn (mut g Game) gameplay(index int) {
 				// forward their reply to the opponent (the attacker) and
 				// hand the turn to the responder.
 				g.set_turn(index)
-				enemy.writef(raw_msg) or {
+				enemy.send(raw_msg) or {
 					println('[Server] failed to write reply: ${err.msg()}')
 					g.end()
 					return
@@ -222,7 +241,7 @@ fn (mut g Game) gameplay(index int) {
 				g.mutex.lock()
 				g.phase = .post_game
 				g.mutex.unlock()
-				enemy.writef(core.Message.opponent_defeated.to_bytes()) or {
+				enemy.send(core.Message.opponent_defeated.to_bytes()) or {
 					println('[Server] failed to write defeat: ${err.msg()}')
 					g.end()
 					return
@@ -241,7 +260,7 @@ fn (mut g Game) gameplay(index int) {
 				if !allowed {
 					continue
 				}
-				enemy.writef(core.Message.opponent_requested_rematch.to_bytes()) or {
+				enemy.send(core.Message.opponent_requested_rematch.to_bytes()) or {
 					println('[Server] failed to write rematch request: ${err.msg()}')
 					g.end()
 					return
@@ -251,7 +270,7 @@ fn (mut g Game) gameplay(index int) {
 				}
 			}
 			.find_new_opponent {
-				enemy.writef(core.Message.opponent_left.to_bytes()) or {}
+				enemy.send(core.Message.opponent_left.to_bytes()) or {}
 				g.end()
 				return
 			}
@@ -364,7 +383,7 @@ fn (mut server Server) handle_client(raw_socket &PlayerTcpConn) {
 	if server.queue.len == 0 {
 		server.queue << socket
 		server.mutex.unlock()
-		socket.writef(core.Message.added_player_to_queue.to_bytes()) or {
+		socket.send(core.Message.added_player_to_queue.to_bytes()) or {
 			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
 			server.mutex.lock()
 			server.dequeue(socket.id)
@@ -383,12 +402,12 @@ fn (mut server Server) handle_client(raw_socket &PlayerTcpConn) {
 		server.games[g.id] = g
 		server.mutex.unlock()
 
-		socket.writef(core.Message.paired_with_player.to_bytes()) or {
+		socket.send(core.Message.paired_with_player.to_bytes()) or {
 			println(term.bright_red('[Server]') + ' failed to write message: ${err.msg()}')
 			g.end()
 			return
 		}
-		foe.writef(core.Message.paired_with_player.to_bytes()) or {
+		foe.send(core.Message.paired_with_player.to_bytes()) or {
 			println(term.bright_red('[Server]') + ' failed to write message: ${err.msg()}')
 			g.end()
 			return
