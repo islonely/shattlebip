@@ -1,0 +1,9 @@
+# Shattlebip settings. Both the client and server read this file.
+
+[server]
+host = "127.0.0.1"
+port = 1902
+
+[display]
+# set to true to disable colors in the client
+no_color = false

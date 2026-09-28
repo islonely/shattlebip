@@ -4,8 +4,6 @@ import core
 import net
 import time
 
-const server_host = '127.0.0.1:1902'
-
 // initiate_server_connection tries to connect to the server. When the player
 // chose "find new opponent" it reconnects and rejoins the queue.
 fn (mut game Game) initiate_server_connection() {
@@ -15,7 +13,7 @@ fn (mut game Game) initiate_server_connection() {
 			game.menu.items[disconnect_idx].state = .unselected
 		}
 		game.banner_text_channel <- 'Initiating server connection.'
-		mut conn := net.dial_tcp(server_host) or {
+		mut conn := net.dial_tcp(game.server_addr) or {
 			game.banner_text_channel <- 'Failed to connect to server.'
 			if index := game.menu.find('Disconnect') {
 				game.menu.items[index].state = .disabled

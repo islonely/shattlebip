@@ -4,6 +4,7 @@ import net
 import term
 import rand
 import core
+import config
 import math
 import time
 import sync
@@ -496,8 +497,9 @@ fn (mut p PlayerTcpConn) is_alive() bool {
 
 // init sets up the server and and loads config files.
 fn (mut server Server) init() ! {
-	server.listener = net.listen_tcp(.ip, '127.0.0.1:1902') or {
-		return error('failed to listen on 127.0.0.1:1902')
+	cfg := config.load()
+	server.listener = net.listen_tcp(.ip, cfg.addr()) or {
+		return error('failed to listen on ${cfg.addr()}')
 	}
 	laddr := server.listener.addr()!
 	println('[Server] Listen on ${laddr} ...')

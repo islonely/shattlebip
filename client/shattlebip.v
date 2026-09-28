@@ -6,6 +6,7 @@ import rand
 import log
 import net
 import core
+import config
 import util
 import time
 
@@ -22,6 +23,8 @@ fn main() {
 		width:  w
 		height: h
 	}
+	game.cfg = config.load()
+	game.server_addr = game.cfg.addr()
 	game.tui = tui.init(
 		user_data:   game
 		event_fn:    event
@@ -44,7 +47,10 @@ fn main() {
 			},
 			MenuItem{
 				label: 'Settings'
-				state: .disabled
+				state: .unselected
+				do:    fn [mut game] () {
+					game.show_settings = true
+				}
 			},
 			MenuItem{
 				label: 'Disconnect'
@@ -113,6 +119,9 @@ mut:
 	banner_text                string      = '                          SHATTLEBIP                          '
 	banner_text_channel        chan string = chan string{ cap: 100 }
 	server                     core.BufferedTcpConn
+	server_addr                string = '127.0.0.1:1902'
+	cfg                        config.Config
+	show_settings              bool
 	network_thread             thread
 	logger                     shared log.ThreadSafeLog
 	// cell the player most recently fired at; used to place the reply
@@ -199,6 +208,12 @@ fn event(event &tui.Event, mut game Game) {
 // main_menu_event handles mouse, keyboard, and window events that
 // hgameen during the .main_menu state.
 fn (mut game Game) main_menu_event(event &tui.Event) {
+	if game.show_settings {
+		if event.typ == .key_down {
+			game.show_settings = false
+		}
+		return
+	}
 	match event.typ {
 		.key_down {
 			match event.code {
@@ -545,7 +560,27 @@ fn (mut game Game) wait_for_enemy_ship_placement_frame() {
 // main_menu_frame draws the screen in the .main_menu state.
 fn (mut game Game) main_menu_frame() {
 	game.draw_banner()
+	if game.show_settings {
+		game.draw_settings()
+		return
+	}
 	game.menu.draw_center(mut game)
+}
+
+// draw_settings shows the loaded configuration; edit config.toml to change it.
+fn (mut game Game) draw_settings() {
+	lines := [
+		'Settings (edit ${config.file_path} to change)',
+		'',
+		'Server address : ${game.cfg.addr()}',
+		'Colors         : ${if game.cfg.no_color { 'off' } else { 'on' }}',
+		'',
+		'Press any key to go back',
+	]
+	y := (game.height / 2) - (lines.len / 2)
+	for i, line in lines {
+		game.tui.draw_text((game.width / 2) - (line.len / 2), y + i, term.bright_white(line))
+	}
 }
 
 // my_turn_frame draws the screen in the .my_turn state.
