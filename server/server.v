@@ -6,9 +6,21 @@ import rand
 import core
 import math
 import time
+import sync
 
 const default_read_timeout = time.minute * 5
 const default_write_timeout = time.second * 10
+
+// a game is force ended after this long, in seconds
+const game_max_age_seconds = 60 * 60
+// how often ended games are drained and active games scanned for staleness
+const reap_interval = 5 * time.second
+
+// GamePhase is what part of a match the game is currently in.
+enum GamePhase {
+	playing
+	post_game
+}
 
 // Server handles everything related to player connections.
 @[heap]
@@ -18,8 +30,9 @@ mut:
 	queue    []&PlayerTcpConn
 	games    map[string]&Game
 	// receives the uuid of the game being played
-	ended_games_chan   chan string
+	ended_games_chan   chan string = chan string{ cap: 100 }
 	clean_games_thread thread
+	mutex              &sync.Mutex = sync.new_mutex()
 }
 
 // PlayerTcpConn is a TCP connection with an associated index in server queue.
@@ -35,6 +48,10 @@ mut:
 struct Game {
 	id string = rand.uuid_v4()
 mut:
+	created_at         i64       = time.now().unix()
+	phase              GamePhase = .playing
+	rematch_requests   [2]bool
+	mutex              &sync.Mutex = sync.new_mutex()
 	states             []core.GameState
 	players            []&PlayerTcpConn
 	handle_tcp_threads []thread
@@ -72,10 +89,35 @@ fn main() {
 	server.listener.close() or { eprintln('[Server] Failed to close TCP listener:\n${err.msg()}.') }
 }
 
-// start starts a game by responding to player ship placement status.
-// And by selecting a random player to start the game.
+// start pairs two players into a fresh game and begins the first round.
 fn (mut g Game) start() {
-	// choose the player at random to start the game
+	g.begin_round(false)
+	g.handle_tcp_threads << spawn g.gameplay(0)
+	g.handle_tcp_threads << spawn g.gameplay(1)
+}
+
+// begin_round resets the per-round state and tells the players who goes
+// first. Rematch rounds first ask both clients to reset their boards.
+fn (mut g Game) begin_round(is_rematch bool) {
+	if is_rematch {
+		g.players[0].writef(core.Message.rematch_start.to_bytes()) or {
+			g.end()
+			return
+		}
+		g.players[1].writef(core.Message.rematch_start.to_bytes()) or {
+			g.end()
+			return
+		}
+	}
+
+	g.mutex.lock()
+	g.phase = .playing
+	g.created_at = time.now().unix()
+	g.rematch_requests[0] = false
+	g.rematch_requests[1] = false
+	g.mutex.unlock()
+
+	// choose the player at random to start the round
 	start_player := rand.int_in_range(0, 2) or {
 		// just make player[0] go first if this fails
 		println('[Server] Failed to generate random number: ${err.msg()}')
@@ -93,9 +135,6 @@ fn (mut g Game) start() {
 		g.end()
 		return
 	}
-
-	g.handle_tcp_threads << spawn g.gameplay(start_player)
-	g.handle_tcp_threads << spawn g.gameplay(end_player)
 }
 
 // gameplay is the meat and potatoes of the game of shattlebip where the
@@ -162,8 +201,47 @@ fn (mut g Game) gameplay(index int) {
 					return
 				}
 			}
+			.defeated {
+				// This player's fleet is gone; let the opponent know they won.
+				g.mutex.lock()
+				g.phase = .post_game
+				g.mutex.unlock()
+				enemy.writef(core.Message.opponent_defeated.to_bytes()) or {
+					println('[Server] failed to write defeat: ${err.msg()}')
+					g.end()
+					return
+				}
+			}
+			.rematch_request {
+				mut both := false
+				mut allowed := false
+				g.mutex.lock()
+				if g.phase == .post_game {
+					g.rematch_requests[index] = true
+					both = g.rematch_requests[0] && g.rematch_requests[1]
+					allowed = true
+				}
+				g.mutex.unlock()
+				if !allowed {
+					continue
+				}
+				enemy.writef(core.Message.opponent_requested_rematch.to_bytes()) or {
+					println('[Server] failed to write rematch request: ${err.msg()}')
+					g.end()
+					return
+				}
+				if both {
+					g.begin_round(true)
+				}
+			}
+			.find_new_opponent {
+				enemy.writef(core.Message.opponent_left.to_bytes()) or {}
+				g.end()
+				return
+			}
 			.terminate_connection {
 				g.end()
+				return
 			}
 			.paired_with_player {}
 			else {
@@ -184,21 +262,54 @@ fn (mut g Game) end() {
 // close_game closes all the connections to players in a game.
 @[inline]
 fn (mut g Game) close_game() {
-	for mut player in g.players {
-		player.close() or {
+	for i in 0 .. g.players.len {
+		g.players[i].close() or {
 			println(term.bright_red('[Server]') + 'Failed to properly close connection to player.')
 		}
 	}
 }
 
-// dispose_of_ended_games
+// dispose_of_ended_games reaps games that have ended or gotten too old.
 fn (mut server Server) dispose_of_ended_games() {
 	for {
-		uuid := <-server.ended_games_chan
-		mut game := server.games[uuid] or { continue }
-		game.close_game()
-		server.games.delete(uuid)
+		// drain every game that has ended since the last pass
+		for {
+			mut uuid := ''
+			if server.ended_games_chan.try_pop(mut uuid) != .success {
+				break
+			}
+			server.end_game(uuid)
+		}
+
+		now := time.now().unix()
+		mut stale := []string{}
+		server.mutex.lock()
+		for game_id, game in server.games {
+			if now - game.created_at > game_max_age_seconds {
+				stale << game_id
+			}
+		}
+		server.mutex.unlock()
+		for game_id in stale {
+			println('[Server] Reaping game past its ${game_max_age_seconds / 60} minute limit: ${game_id}')
+			server.end_game(game_id)
+		}
+
+		time.sleep(reap_interval)
 	}
+}
+
+// end_game removes a game from the active games and closes its connections.
+fn (mut server Server) end_game(uuid string) {
+	server.mutex.lock()
+	game := server.games[uuid] or {
+		server.mutex.unlock()
+		return
+	}
+	server.games.delete(uuid)
+	server.mutex.unlock()
+	println('[Server] Ending game: ${uuid}')
+	game.close_game()
 }
 
 // handle_client either queues players or pairs them for a game.
@@ -215,32 +326,37 @@ fn (mut server Server) handle_client(raw_socket &PlayerTcpConn) {
 	socket.set_read_timeout(default_read_timeout)
 
 	// queue the player or start the game
+	server.mutex.lock()
 	if server.queue.len == 0 {
+		server.queue << socket
+		server.mutex.unlock()
 		socket.writef(core.Message.added_player_to_queue.to_bytes()) or {
 			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
+			server.mutex.lock()
+			server.dequeue(socket.id)
+			server.mutex.unlock()
 			return
 		}
-
-		server.queue << socket
 	} else {
+		mut foe := server.queue.first()
+		server.queue.delete(0)
 		mut g := &Game{
 			server: server
 		}
-		mut foe := &PlayerTcpConn{}
-		foe = server.queue.first()
-		server.queue.delete(0)
 		g.players << foe
 		g.players << socket
 		g.states = [.placing_ships, .placing_ships]
-
 		server.games[g.id] = g
+		server.mutex.unlock()
 
 		socket.writef(core.Message.paired_with_player.to_bytes()) or {
 			println(term.bright_red('[Server]') + ' failed to write message: ${err.msg()}')
+			g.end()
 			return
 		}
 		foe.writef(core.Message.paired_with_player.to_bytes()) or {
 			println(term.bright_red('[Server]') + ' failed to write message: ${err.msg()}')
+			g.end()
 			return
 		}
 		g.start()
@@ -256,8 +372,9 @@ fn (mut server Server) init() ! {
 	println('[Server] Listen on ${laddr} ...')
 }
 
-// unqueue removes a player from the queue of connections waiting to join a game.
-fn (mut server Server) unqueue(id string) {
+// dequeue removes a player from the queue of connections waiting to join a
+// game. Callers must hold Server.mutex.
+fn (mut server Server) dequeue(id string) {
 	mut index := -1
 	for i, conn in server.queue {
 		if conn.id == id {

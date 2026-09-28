@@ -70,6 +70,8 @@ pub mut:
 	neutrality Neutrality = .neutral
 	state      CellState  = .empty
 	content    string
+	// flash highlights the cell for one frame; used for attack feedback
+	flash bool
 }
 
 // Grid is the gameboard through which the players view the game world.
@@ -115,6 +117,20 @@ pub fn (mut g Grid) badify() {
 	}
 }
 
+// all_ships_sunk returns true when no ship cell is left standing, which
+// means the fleet on this grid has been destroyed.
+pub fn (g Grid) all_ships_sunk() bool {
+	ships := [CellState.carrier, .battleship, .cruiser, .submarine, .destroyer]
+	for row in g.grid {
+		for cell in row {
+			if cell.state in ships {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // string converts the `Grid` to a string for terminal output with
 // the cursor denoted by a yellow color.
 pub fn (g Grid) str() string {
@@ -149,6 +165,11 @@ pub fn (g Grid) str() string {
 		// draws "|_" back to back to form row in grid
 		for x, cell in row {
 			last_cell := if x == 0 { cell } else { g.grid[y][x - 1] }
+			// a flashing cell is always drawn highlighted, even under the cursor
+			if cell.flash {
+				grid_bldr.write_string(term.bg_red('|${cell_pictograph[cell.state.str()]}'))
+				continue
+			}
 			// line before cursor
 			if y == g.cursor.y - 1 && x == g.cursor.x {
 				grid_bldr.write_string(term.bright_blue('|') + if cell.state == .empty {
@@ -179,7 +200,7 @@ pub fn (g Grid) str() string {
 			}
 			// Cell.neutrality is .bad
 			else if cell.neutrality == .bad {
-				grid_bldr.write_string(good_color('|${cell_pictograph[cell.state.str()]}'))
+				grid_bldr.write_string(term.bg_red('|${cell_pictograph[cell.state.str()]}'))
 			} else if last_cell.neutrality == .bad {
 				grid_bldr.write_string(term.bg_red('|') + cell_pictograph[cell.state.str()])
 			}
@@ -205,63 +226,94 @@ pub fn (g Grid) str() string {
 	return grid_bldr.str()
 }
 
-// place_ship puts a ship onto the grid in the specified location.
-// Error returned upon invalid ship placement.
+// can_place_ship reports whether a ship of `size` fits with its bow at
+// `pos` and extends right (horizontal) or down (vertical).
+pub fn (g Grid) can_place_ship(size int, pos Pos, o Orientation) bool {
+	if pos.x < 0 || pos.y < 0 || pos.x > 9 || pos.y > 9 {
+		return false
+	}
+	match o {
+		.horizontal {
+			if pos.x + size > 10 {
+				return false
+			}
+			for x in pos.x .. pos.x + size {
+				if g.grid[pos.y][x].state != .empty {
+					return false
+				}
+			}
+		}
+		.vertical {
+			if pos.y + size > 10 {
+				return false
+			}
+			for y in pos.y .. pos.y + size {
+				if g.grid[y][pos.x].state != .empty {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// place_ship puts a ship onto the grid with its bow at `pos`. Error is
+// returned when the placement is out of bounds or overlaps another ship.
 pub fn (mut g Grid) place_ship(typ CellState, size int, pos Pos, o Orientation) ! {
 	ships := [CellState.carrier, .battleship, .cruiser, .submarine, .destroyer]
 	if typ !in ships {
 		return error('Invalid cell state for ship placement: ${typ}')
 	}
+	if !g.can_place_ship(size, pos, o) {
+		return error('Grid space occupied or out of bounds.')
+	}
 	match o {
-		.vertical {
-			if pos.y <= size {
-				for y in pos.y .. (pos.y + size) {
-					if g.grid[y][pos.x].state in ships {
-						return error('Grid space occupied.')
-					}
-				}
-				for y in pos.y .. (pos.y + size) {
-					g.grid[y][pos.x] = Cell{
-						state: typ
-					}
-				}
-			} else {
-				for y in (pos.y - size) .. pos.y {
-					if g.grid[y][pos.x].state in ships {
-						return error('Grid space occupied.')
-					}
-				}
-				for y in (pos.y - size) .. pos.y {
-					g.grid[y][pos.x] = Cell{
-						state: typ
-					}
+		.horizontal {
+			for x in pos.x .. pos.x + size {
+				g.grid[pos.y][x] = Cell{
+					state: typ
 				}
 			}
 		}
-		.horizontal {
-			if pos.x <= size {
-				for x in pos.x .. (pos.x + size) {
-					if g.grid[pos.y][x].state in ships {
-						return error('Grid space occupied.')
-					}
-				}
-				for x in pos.x .. (pos.x + size) {
-					g.grid[pos.y][x] = Cell{
-						state: typ
-					}
-				}
-			} else {
-				for x in (pos.x - size) .. pos.x {
-					if g.grid[pos.y][x].state in ships {
-						return error('Grid space occupied.')
-					}
-				}
-				for x in (pos.x - size) .. pos.x {
-					g.grid[pos.y][x] = Cell{
-						state: typ
-					}
+		.vertical {
+			for y in pos.y .. pos.y + size {
+				g.grid[y][pos.x] = Cell{
+					state: typ
 				}
 			}
 		}
 	}
+}
+
+// remove_ship clears every cell occupied by the given ship type.
+pub fn (mut g Grid) remove_ship(typ CellState) {
+	for y in 0 .. g.grid.len {
+		for x in 0 .. g.grid[y].len {
+			if g.grid[y][x].state == typ {
+				g.grid[y][x].state = .empty
+			}
+		}
+	}
+}
+
+// set_neutrality sets the neutrality of the cell at `pos`, ignoring
+// out-of-bounds positions.
+pub fn (mut g Grid) set_neutrality(pos Pos, n Neutrality) {
+	if pos.x < 0 || pos.x > 9 || pos.y < 0 || pos.y > 9 {
+		return
+	}
+	mut cell := g.grid[pos.y][pos.x]
+	cell.neutrality = n
+	g.grid[pos.y][pos.x] = cell
+}
+
+// set_flash toggles the flash highlight on the cell at `pos`, ignoring
+// out-of-bounds positions.
+pub fn (mut g Grid) set_flash(pos Pos, on bool) {
+	if pos.x < 0 || pos.x > 9 || pos.y < 0 || pos.y > 9 {
+		return
+	}
+	mut cell := g.grid[pos.y][pos.x]
+	cell.flash = on
+	g.grid[pos.y][pos.x] = cell
 }

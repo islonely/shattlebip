@@ -16,6 +16,11 @@ pub enum Message as u32 {
 	hit
 	miss
 	not_your_turn
+	// sent when a player's whole fleet has been sunk
+	defeated
+	// post-game choices
+	rematch_request
+	find_new_opponent
 	client_upper
 	// server messages
 	server_lower = 0x02_000000
@@ -27,6 +32,14 @@ pub enum Message as u32 {
 	added_player_to_queue
 	paired_with_player
 	raw_bytes
+	// opponent's fleet was sunk; the recipient won
+	opponent_defeated
+	// the opponent asked for a rematch
+	opponent_requested_rematch
+	// both players agreed; reset the boards and start a new round
+	rematch_start
+	// the opponent chose to find a new opponent or disconnected
+	opponent_left
 	server_upper
 }
 

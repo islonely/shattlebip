@@ -6,29 +6,43 @@ import time
 
 const server_host = '127.0.0.1:1902'
 
-// initiate_server_connection tries to connect to the server.
+// initiate_server_connection tries to connect to the server. When the player
+// chose "find new opponent" it reconnects and rejoins the queue.
 fn (mut game Game) initiate_server_connection() {
-	if disconnect_idx := game.menu.find('Disconnect') {
-		game.menu.items[disconnect_idx].state = .unselected
-	}
-	game.banner_text_channel <- 'Initiating server connection.'
-	mut conn := net.dial_tcp(server_host) or {
-		game.banner_text_channel <- 'Failed to connect to server.'
-		if index := game.menu.find('Disconnect') {
-			game.menu.items[index].state = .disabled
+	for {
+		game.want_requeue = false
+		if disconnect_idx := game.menu.find('Disconnect') {
+			game.menu.items[disconnect_idx].state = .unselected
 		}
-		return
-	}
-	game.server = core.BufferedTcpConn.new(mut conn)
-	game.server.sock.set_option_bool(.keep_alive, true) or {
-		game.end('Could not set socket to keep alive: ${err}')
-	}
-	game.server.set_read_timeout(default_read_timeout)
-	game.server.set_write_timeout(default_write_timeout)
+		game.banner_text_channel <- 'Initiating server connection.'
+		mut conn := net.dial_tcp(server_host) or {
+			game.banner_text_channel <- 'Failed to connect to server.'
+			if index := game.menu.find('Disconnect') {
+				game.menu.items[index].state = .disabled
+			}
+			return
+		}
+		game.server = core.BufferedTcpConn.new(mut conn)
+		game.server.sock.set_option_bool(.keep_alive, true) or {
+			game.end('Could not set socket to keep alive: ${err}')
+			return
+		}
+		game.server.set_read_timeout(default_read_timeout)
+		game.server.set_write_timeout(default_write_timeout)
 
-	game.banner_text_channel <- 'Connected to server.'
-	game.connected() or {
-		game.end(err.msg())
+		// fresh boards and a clean menu for this connection
+		game.reset_grids()
+		game.state = .main_menu
+		game.banner_text_channel <- 'Connected to server.'
+
+		mut err_msg := ''
+		game.connected() or {
+			err_msg = err.msg()
+		}
+		if game.want_requeue {
+			continue
+		}
+		game.end(err_msg)
 		return
 	}
 }
@@ -71,6 +85,9 @@ fn (mut game Game) connected() ! {
 			.wait_for_enemy_ship_placement {
 				game.connected_wait_for_enemy_ship_placement(msg)!
 			}
+			.game_over {
+				game.connected_game_over(msg)!
+			}
 		}
 	}
 }
@@ -83,7 +100,7 @@ fn (mut game Game) connected_main_menu(msg core.Message) ! {
 			game.banner_text_channel <- 'No players. Added to queue'
 		}
 		.paired_with_player {
-			game.switch_state(.placing_ships, 'Press R to place your ships randomly')
+			game.switch_state(.placing_ships, 'Place your ships to begin.')
 			game.write_message(core.Message.paired_with_player)!
 			game.server.flush()!
 		}
@@ -100,7 +117,7 @@ fn (mut game Game) connected_my_turn(msg core.Message) ! {
 		.set_cursor_pos {
 			game.read_cursor()
 		}
-		.hit, .miss, .not_your_turn {
+		.hit, .miss, .not_your_turn, .opponent_defeated {
 			game.handle_attack_reply(msg)
 		}
 		else {
@@ -124,6 +141,11 @@ fn (mut game Game) handle_attack_reply(msg core.Message) {
 		}
 		.not_your_turn {
 			game.banner_text_channel <- "It's not your turn."
+		}
+		.opponent_defeated {
+			game.enemy_grid.grid[pos.y][pos.x].state = .hit
+			game.enter_game_over(true, 'You win! Enemy fleet destroyed.')
+			return
 		}
 		else {}
 	}
@@ -159,7 +181,7 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 		.set_cursor_pos {
 			game.read_cursor()
 		}
-		.hit, .miss, .not_your_turn {
+		.hit, .miss, .not_your_turn, .opponent_defeated {
 			game.handle_attack_reply(msg)
 		}
 		.attack_cell {
@@ -168,6 +190,7 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 			pos_bytes := game.server.read_chunk(pos_sz)!
 			pos := unsafe { core.Pos.from_bytes(pos_bytes) }
 			game.player_grid.cursor.Pos = pos
+			game.start_flash(pos, false)
 
 			// check if it's their turn
 			if game.state == .my_turn {
@@ -185,17 +208,34 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 				.submarine,
 				.destroyer,
 			]
-			// update cell state and send state to server
-			send_msg := if is_cell_occupied {
+			existing := game.player_grid.grid[pos.y][pos.x].state
+			if existing in [core.CellState.hit, core.CellState.miss] {
+				// this cell was already resolved; echo the old result so an
+				// accidental repeat attack cannot turn a hit into a miss
+				game.write_message(if existing == .hit {
+					core.Message.hit
+				} else {
+					core.Message.miss
+				})!
+				game.server.flush()!
+				return
+			}
+			if is_cell_occupied {
 				game.player_grid.grid[pos.y][pos.x].state = .hit
+				// the fleet is gone, so this player has lost the round
+				if game.player_grid.all_ships_sunk() {
+					game.write_message(core.Message.defeated)!
+					game.server.flush()!
+					game.enter_game_over(false, 'You lose! Your fleet was destroyed.')
+					return
+				}
 				game.banner_text_channel <- 'Hit ${game.player_grid.cursor.val()}! Your turn.'
-				core.Message.hit
+				game.write_message(core.Message.hit)!
 			} else {
 				game.player_grid.grid[pos.y][pos.x].state = .miss
 				game.banner_text_channel <- 'Miss. Your turn.'
-				core.Message.miss
+				game.write_message(core.Message.miss)!
 			}
-			game.write_message(send_msg)!
 			game.server.flush()!
 
 			game.switch_state(.my_turn, none)
@@ -217,6 +257,30 @@ fn (mut game Game) connected_wait_for_enemy_ship_placement(msg core.Message) ! {
 			} else {
 				game.switch_state(.their_turn, 'Game start! Their turn first.')
 			}
+		}
+		else {
+			return error('${game.state} unexpected message: ${msg}')
+		}
+	}
+}
+
+// connected_game_over handles the Messages received from the server during
+// the .game_over state.
+fn (mut game Game) connected_game_over(msg core.Message) ! {
+	match msg {
+		.rematch_start {
+			game.reset_grids()
+			game.switch_state(.placing_ships, 'Rematch! Place your ships.')
+		}
+		.opponent_requested_rematch {
+			game.opponent_requested_rematch = true
+			game.banner_text_channel <- 'Opponent wants a rematch!'
+		}
+		.opponent_left {
+			game.end('Opponent left the game.')
+		}
+		.set_cursor_pos {
+			game.read_cursor()
 		}
 		else {
 			return error('${game.state} unexpected message: ${msg}')

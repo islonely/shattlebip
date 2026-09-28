@@ -7,4 +7,6 @@ pub enum GameState {
 	main_menu
 	my_turn
 	their_turn
+	// the round has finished; the player is choosing rematch/new opponent/quit
+	game_over
 }
