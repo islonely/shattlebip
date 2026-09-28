@@ -48,9 +48,11 @@ mut:
 struct Game {
 	id string = rand.uuid_v4()
 mut:
-	created_at         i64       = time.now().unix()
-	phase              GamePhase = .playing
-	rematch_requests   [2]bool
+	created_at       i64       = time.now().unix()
+	phase            GamePhase = .playing
+	rematch_requests [2]bool
+	// index of the player whose turn it is
+	turn               int
 	mutex              &sync.Mutex = sync.new_mutex()
 	states             []core.GameState
 	players            []&PlayerTcpConn
@@ -124,6 +126,7 @@ fn (mut g Game) begin_round(is_rematch bool) {
 		0
 	}
 	end_player := math.abs(start_player - 1)
+	g.set_turn(start_player)
 
 	g.players[start_player].writef(core.Message.start_player.to_bytes()) or {
 		println('[Server] failed to write to player[${start_player}]: ${err.msg()}')
@@ -159,6 +162,14 @@ fn (mut g Game) gameplay(index int) {
 					g.end()
 					return
 				}
+				// the server decides whose turn it is; ignore out-of-turn attacks
+				if !g.is_turn(index) {
+					player.writef(core.Message.not_your_turn.to_bytes()) or {
+						g.end()
+						return
+					}
+					continue
+				}
 				enemy.write_buffered(core.Message.attack_cell.to_bytes())
 				enemy.write_buffered(pos_bytes)
 				enemy.flush() or {
@@ -192,14 +203,19 @@ fn (mut g Game) gameplay(index int) {
 					return
 				}
 			}
-			.hit, .miss, .not_your_turn {
+			.hit, .miss {
 				// This thread owns the player who answered an attack, so
-				// forward their reply to the opponent (the attacker).
+				// forward their reply to the opponent (the attacker) and
+				// hand the turn to the responder.
+				g.set_turn(index)
 				enemy.writef(raw_msg) or {
 					println('[Server] failed to write reply: ${err.msg()}')
 					g.end()
 					return
 				}
+			}
+			.not_your_turn {
+				// no longer sent by clients; ignore defensively
 			}
 			.defeated {
 				// This player's fleet is gone; let the opponent know they won.
@@ -251,6 +267,24 @@ fn (mut g Game) gameplay(index int) {
 			}
 		}
 	}
+}
+
+// is_turn reports whether the player at `index` may attack right now.
+fn (mut g Game) is_turn(index int) bool {
+	g.mutex.lock()
+	defer {
+		g.mutex.unlock()
+	}
+	return g.phase == .playing && g.turn == index
+}
+
+// set_turn makes the player at `index` the active attacker.
+fn (mut g Game) set_turn(index int) {
+	g.mutex.lock()
+	defer {
+		g.mutex.unlock()
+	}
+	g.turn = index
 }
 
 // end push the Game.id to the channel for the server to handle.

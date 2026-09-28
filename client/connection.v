@@ -192,14 +192,6 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 			game.player_grid.cursor.Pos = pos
 			game.start_flash(pos, false)
 
-			// check if it's their turn
-			if game.state == .my_turn {
-				nyt_msg := core.Message.not_your_turn
-				game.write_message(nyt_msg)!
-				game.server.flush()!
-				return
-			}
-
 			// check cell status
 			is_cell_occupied := game.player_grid.grid[pos.y][pos.x].state in [
 				core.CellState.carrier,
