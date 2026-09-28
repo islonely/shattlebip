@@ -13,6 +13,8 @@ const default_write_timeout = time.second * 10
 
 // a game is force ended after this long, in seconds
 const game_max_age_seconds = 60 * 60
+// a client waiting in the queue is dropped after this long, in seconds
+const queue_max_age_seconds = 60 * 10
 // how often ended games are drained and active games scanned for staleness
 const reap_interval = 5 * time.second
 
@@ -42,6 +44,8 @@ pub struct PlayerTcpConn {
 mut:
 	id          string      = rand.uuid_v4()
 	write_mutex &sync.Mutex = sync.new_mutex()
+	// unix time the client was placed in the matchmaking queue
+	queued_at i64
 }
 
 // send writes a chunk and flushes it while holding this connection's lock,
@@ -348,6 +352,25 @@ fn (mut server Server) dispose_of_ended_games() {
 			server.end_game(game_id)
 		}
 
+		// drop clients that have been waiting in the queue too long
+		mut stale_queue := []&PlayerTcpConn{}
+		server.mutex.lock()
+		mut keep := []&PlayerTcpConn{}
+		for conn in server.queue {
+			if now - conn.queued_at > queue_max_age_seconds {
+				stale_queue << conn
+			} else {
+				keep << conn
+			}
+		}
+		server.queue = keep
+		server.mutex.unlock()
+		for conn in stale_queue {
+			println('[Server] Dropping stale queued client: ${conn.id}')
+			conn.send(core.Message.connection_terminated.to_bytes()) or {}
+			conn.close() or {}
+		}
+
 		time.sleep(reap_interval)
 	}
 }
@@ -381,6 +404,7 @@ fn (mut server Server) handle_client(raw_socket &PlayerTcpConn) {
 	// queue the player or start the game
 	server.mutex.lock()
 	if server.queue.len == 0 {
+		socket.queued_at = time.now().unix()
 		server.queue << socket
 		server.mutex.unlock()
 		socket.send(core.Message.added_player_to_queue.to_bytes()) or {
@@ -393,27 +417,65 @@ fn (mut server Server) handle_client(raw_socket &PlayerTcpConn) {
 	} else {
 		mut foe := server.queue.first()
 		server.queue.delete(0)
+		server.mutex.unlock()
+
+		// a queued client that has gone away is replaced by this one
+		if !foe.is_alive() {
+			println('[Server] Dropping dead queued client: ${foe.id}')
+			foe.close() or {}
+			server.mutex.lock()
+			socket.queued_at = time.now().unix()
+			server.queue << socket
+			server.mutex.unlock()
+			socket.send(core.Message.added_player_to_queue.to_bytes()) or {}
+			return
+		}
+
 		mut g := &Game{
 			server: server
 		}
 		g.players << foe
 		g.players << socket
 		g.states = [.placing_ships, .placing_ships]
+		server.mutex.lock()
 		server.games[g.id] = g
 		server.mutex.unlock()
+
+		// belt and braces: if the queued opponent disappears between the
+		// liveness probe and the write, requeue this client instead
+		foe.send(core.Message.paired_with_player.to_bytes()) or {
+			println('[Server] queued opponent is gone (${err.msg()}); requeueing new client')
+			server.mutex.lock()
+			server.games.delete(g.id)
+			socket.queued_at = time.now().unix()
+			server.queue << socket
+			server.mutex.unlock()
+			foe.close() or {}
+			socket.send(core.Message.added_player_to_queue.to_bytes()) or {}
+			return
+		}
 
 		socket.send(core.Message.paired_with_player.to_bytes()) or {
 			println(term.bright_red('[Server]') + ' failed to write message: ${err.msg()}')
 			g.end()
 			return
 		}
-		foe.send(core.Message.paired_with_player.to_bytes()) or {
-			println(term.bright_red('[Server]') + ' failed to write message: ${err.msg()}')
-			g.end()
-			return
-		}
 		g.start()
 	}
+}
+
+// is_alive reports whether a queued connection is still open. It briefly
+// waits for readability: a closed peer is readable and then reads EOF.
+fn (mut p PlayerTcpConn) is_alive() bool {
+	p.set_read_timeout(time.millisecond * 20)
+	p.wait_for_read() or {
+		// timed out with no data, so the client is still waiting
+		p.set_read_timeout(default_read_timeout)
+		return true
+	}
+	// a queued client sends nothing, so readability means it went away
+	p.set_read_timeout(default_read_timeout)
+	return false
 }
 
 // init sets up the server and and loads config files.
