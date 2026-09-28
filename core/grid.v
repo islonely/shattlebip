@@ -139,8 +139,11 @@ pub fn (g Grid) str() string {
 	name := prefix + g.name_colorizer(g.name)
 	name_len := g.name.len + prefix.len
 	padding := if g.max_banner_len >= name_len { 0 } else { (g.max_banner_len - g.name.len) / 2 }
+	safe_padding := if padding > 0 { padding } else { 0 }
+	under_len := g.len - name_len - 1
+	under := if under_len > 0 { '_'.repeat(under_len) } else { '' }
 	// grid_bldr.write_string(merge_strings('', '', padding, name))
-	grid_bldr.writeln(util.merge_strings('', '', padding, name) + '_'.repeat(g.len - name_len - 1) + ' ')
+	grid_bldr.writeln(util.merge_strings('', '', safe_padding, name) + under + ' ')
 	grid_bldr.write_string('|    ')
 	for i in 0 .. 10 {
 		grid_bldr.write_string(' ${i}')
