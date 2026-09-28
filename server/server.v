@@ -15,6 +15,8 @@ const default_write_timeout = time.second * 10
 const game_max_age_seconds = 60 * 60
 // a client waiting in the queue is dropped after this long, in seconds
 const queue_max_age_seconds = 60 * 10
+// a finished game is closed if nobody starts a rematch within this long
+const post_game_timeout_seconds = 60
 // how often ended games are drained and active games scanned for staleness
 const reap_interval = 5 * time.second
 
@@ -75,7 +77,9 @@ fn (mut p PlayerTcpConn) send_pair(first []u8, second []u8) ! {
 struct Game {
 	id string = rand.uuid_v4()
 mut:
-	created_at       i64       = time.now().unix()
+	created_at i64 = time.now().unix()
+	// when the round finished; used for the post-game timeout
+	post_game_since  i64
 	phase            GamePhase = .playing
 	rematch_requests [2]bool
 	// index of the player whose turn it is
@@ -244,6 +248,7 @@ fn (mut g Game) gameplay(index int) {
 				// This player's fleet is gone; let the opponent know they won.
 				g.mutex.lock()
 				g.phase = .post_game
+				g.post_game_since = time.now().unix()
 				g.mutex.unlock()
 				enemy.send(core.Message.opponent_defeated.to_bytes()) or {
 					println('[Server] failed to write defeat: ${err.msg()}')
@@ -257,6 +262,8 @@ fn (mut g Game) gameplay(index int) {
 				g.mutex.lock()
 				if g.phase == .post_game {
 					g.rematch_requests[index] = true
+					// give the opponent a fresh window to answer
+					g.post_game_since = time.now().unix()
 					both = g.rematch_requests[0] && g.rematch_requests[1]
 					allowed = true
 				}
@@ -340,15 +347,24 @@ fn (mut server Server) dispose_of_ended_games() {
 
 		now := time.now().unix()
 		mut stale := []string{}
+		mut timed_out := []string{}
 		server.mutex.lock()
 		for game_id, game in server.games {
 			if now - game.created_at > game_max_age_seconds {
 				stale << game_id
+			} else if game.phase == .post_game
+				&& game.post_game_since > 0
+				&& now - game.post_game_since > post_game_timeout_seconds {
+				timed_out << game_id
 			}
 		}
 		server.mutex.unlock()
 		for game_id in stale {
 			println('[Server] Reaping game past its ${game_max_age_seconds / 60} minute limit: ${game_id}')
+			server.end_game(game_id)
+		}
+		for game_id in timed_out {
+			println('[Server] Closing game nobody wanted a rematch in: ${game_id}')
 			server.end_game(game_id)
 		}
 
