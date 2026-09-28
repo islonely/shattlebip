@@ -56,7 +56,7 @@ pub enum CellState {
 @[inline]
 fn term_pastel(str string) string {
 	p := Color.pastel()
-	return term.rgb(p.r, p.g, p.g, str)
+	return term.rgb(p.r, p.g, p.b, str)
 }
 
 // good_color is the color used for cells with `Neutraility.good`.
