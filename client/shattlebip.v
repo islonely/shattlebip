@@ -127,6 +127,8 @@ mut:
 	server_addr                string = '127.0.0.1:1902'
 	cfg                        config.Config
 	show_settings              bool
+	show_help                  bool
+	quit_armed_at              u64
 	network_thread             thread
 	logger                     shared log.ThreadSafeLog
 	// cell the player most recently fired at; used to place the reply
@@ -185,7 +187,25 @@ fn (mut game Game) switch_state(state core.GameState, banner_text ?string) {
 // based on the current game state.
 fn event(event &tui.Event, mut game Game) {
 	if event.typ == .key_down && event.code == .escape {
-		exit(0)
+		// require a second Escape press to actually quit
+		now := time.sys_mono_now() / 1_000_000
+		if game.quit_armed_at > 0 && now - game.quit_armed_at < 1500 {
+			exit(0)
+		}
+		game.quit_armed_at = now
+		game.banner_text_channel <- 'Press Escape again to quit.'
+		return
+	}
+	if event.typ == .key_down {
+		game.quit_armed_at = 0
+		if event.code == .question_mark {
+			game.show_help = !game.show_help
+			return
+		}
+		if game.show_help {
+			game.show_help = false
+			return
+		}
 	}
 	game.tui.clear()
 
@@ -852,6 +872,10 @@ fn frame(mut game Game) {
 		.game_over { game.game_over_frame() }
 	}
 
+	if game.show_help {
+		game.draw_help()
+	}
+
 	game.tui.reset()
 	game.tui.flush()
 }
@@ -921,7 +945,28 @@ fn (mut game Game) draw_game() {
 
 // draw_counters shows how many ships each side has left.
 fn (mut game Game) draw_counters() {
-	game.tui.draw_text(0, 21, 'Your ships left: ${game.player_ships_left}   Enemy ships left: ${game.enemy_ships_left}')
+	game.tui.draw_text(0, 21, 'Your ships left: ${game.player_ships_left}   Enemy ships left: ${game.enemy_ships_left}   (? = help)')
+}
+
+// draw_help overlays the key bindings.
+fn (mut game Game) draw_help() {
+	lines := [
+		'SHATTLEBIP - controls',
+		'',
+		'arrows   move cursor',
+		'space    attack / place ship',
+		'r        rotate ship (placing)',
+		'u        undo last ship',
+		'a        place ships randomly',
+		'enter    confirm placement',
+		'f        resign',
+		'?        toggle this help',
+		'esc esc  quit',
+	]
+	y := (game.height / 2) - (lines.len / 2)
+	for i, line in lines {
+		game.tui.draw_text((game.width / 2) - (line.len / 2), y + i, term.bright_white(line))
+	}
 }
 
 // draw_text_center draws text to the screen centered on both the horizontal
