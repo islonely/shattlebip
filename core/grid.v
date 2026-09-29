@@ -1,6 +1,5 @@
 module core
 
-import term
 import strings
 import util
 
@@ -11,9 +10,9 @@ pub const cell_pictograph = {
 	'cruiser':    term_pastel('₪')
 	'submarine':  term_pastel('§')
 	'destroyer':  term_pastel('₪')
-	'empty':      term.bright_blue('_')
-	'hit':        term.bright_red('✗')
-	'miss':       term.white('◯')
+	'empty':      bright_blue('_')
+	'hit':        bright_red('✗')
+	'miss':       white('◯')
 }
 // ship_sizes is the length of each ship.
 pub const ship_sizes = {
@@ -56,12 +55,12 @@ pub enum CellState {
 @[inline]
 fn term_pastel(str string) string {
 	p := Color.pastel()
-	return term.rgb(p.r, p.g, p.b, str)
+	return rgb(p.r, p.g, p.b, str)
 }
 
 // good_color is the color used for cells with `Neutraility.good`.
 fn good_color(str string) string {
-	return term.bg_rgb(0, 100, 30, str)
+	return bg_rgb(0, 100, 30, str)
 }
 
 // Cell is a Cell in the 10x10 Grid.
@@ -80,7 +79,7 @@ pub:
 	max_banner_len int                = 14
 	len            int                = 28
 	name_colorizer fn (string) string = fn (str string) string {
-		return term.bright_white(str)
+		return bright_white(str)
 	}
 __global:
 	// name should be 17 characters or less
@@ -167,7 +166,7 @@ pub fn (g Grid) str() string {
 			grid_bldr.write_string(g.cursor.color(' _'))
 			continue
 		}
-		grid_bldr.write_string(term.bright_blue(' _'))
+		grid_bldr.write_string(bright_blue(' _'))
 	}
 	grid_bldr.write_string('  |\n')
 	for y, row in g.grid {
@@ -183,12 +182,12 @@ pub fn (g Grid) str() string {
 			last_cell := if x == 0 { cell } else { g.grid[y][x - 1] }
 			// a flashing cell is always drawn highlighted, even under the cursor
 			if cell.flash {
-				grid_bldr.write_string(term.bg_red('|${cell_pictograph[cell.state.str()]}'))
+				grid_bldr.write_string(bg_red('|${cell_pictograph[cell.state.str()]}'))
 				continue
 			}
 			// line before cursor
 			if y == g.cursor.y - 1 && x == g.cursor.x {
-				grid_bldr.write_string(term.bright_blue('|') + if cell.state == .empty {
+				grid_bldr.write_string(bright_blue('|') + if cell.state == .empty {
 					g.cursor.color('_')
 				} else {
 					cell_pictograph[cell.state.str()]
@@ -202,7 +201,7 @@ pub fn (g Grid) str() string {
 			}
 			// last line and cursor column
 			else if x == g.cursor.x && y == 9 {
-				grid_bldr.write_string(term.bright_blue('|') + if cell.state == .empty {
+				grid_bldr.write_string(bright_blue('|') + if cell.state == .empty {
 					g.cursor.color('_')
 				} else {
 					cell_pictograph[cell.state.str()]
@@ -216,13 +215,13 @@ pub fn (g Grid) str() string {
 			}
 			// Cell.neutrality is .bad
 			else if cell.neutrality == .bad {
-				grid_bldr.write_string(term.bg_red('|${cell_pictograph[cell.state.str()]}'))
+				grid_bldr.write_string(bg_red('|${cell_pictograph[cell.state.str()]}'))
 			} else if last_cell.neutrality == .bad {
-				grid_bldr.write_string(term.bg_red('|') + cell_pictograph[cell.state.str()])
+				grid_bldr.write_string(bg_red('|') + cell_pictograph[cell.state.str()])
 			}
 			// normal
 			else {
-				grid_bldr.write_string(term.bright_blue('|') + cell_pictograph[cell.state.str()])
+				grid_bldr.write_string(bright_blue('|') + cell_pictograph[cell.state.str()])
 			}
 		}
 
@@ -231,10 +230,10 @@ pub fn (g Grid) str() string {
 			if g.cursor.x == 9 {
 				grid_bldr.write_string(g.cursor.color('|<') + '|\n')
 			} else {
-				grid_bldr.write_string(term.bright_blue('|') + g.cursor.color('<') + '|\n')
+				grid_bldr.write_string(bright_blue('|') + g.cursor.color('<') + '|\n')
 			}
 		} else {
-			grid_bldr.write_string(term.bright_blue('|') + ' |\n')
+			grid_bldr.write_string(bright_blue('|') + ' |\n')
 		}
 	}
 	// draws the grid container bottom minus 2 for the pipes "|" on each side.

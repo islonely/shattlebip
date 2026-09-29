@@ -1,10 +1,8 @@
 module core
 
-import term
-
 // terminal color text function. See V's term module for examples.
-pub const cursor_color = term.bright_yellow
-pub const invalid_cursor_color = term.bright_bg_red
+pub const cursor_color = bright_yellow
+pub const invalid_cursor_color = bright_bg_red
 
 // Cursor is a position on the `Grid` which the user has
 // currently selected.

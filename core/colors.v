@@ -1,7 +1,64 @@
 module core
 
+import term
 import term.ui as tui
 import rand
+
+// no_color disables all ANSI colour output when set (see config.toml).
+pub __global no_color = false
+
+// The colour helpers below are no-ops when no_color is set, so the whole UI
+// can be rendered in plain text.
+
+@[inline]
+pub fn bright_blue(s string) string {
+	return if no_color { s } else { term.bright_blue(s) }
+}
+
+@[inline]
+pub fn bright_white(s string) string {
+	return if no_color { s } else { term.bright_white(s) }
+}
+
+@[inline]
+pub fn white(s string) string {
+	return if no_color { s } else { term.white(s) }
+}
+
+@[inline]
+pub fn bright_red(s string) string {
+	return if no_color { s } else { term.bright_red(s) }
+}
+
+@[inline]
+pub fn bright_yellow(s string) string {
+	return if no_color { s } else { term.bright_yellow(s) }
+}
+
+@[inline]
+pub fn bright_bg_red(s string) string {
+	return if no_color { s } else { term.bright_bg_red(s) }
+}
+
+@[inline]
+pub fn dim(s string) string {
+	return if no_color { s } else { term.dim(s) }
+}
+
+@[inline]
+pub fn bg_red(s string) string {
+	return if no_color { s } else { term.bg_red(s) }
+}
+
+@[inline]
+pub fn rgb(r int, g int, b int, s string) string {
+	return if no_color { s } else { term.rgb(r, g, b, s) }
+}
+
+@[inline]
+pub fn bg_rgb(r int, g int, b int, s string) string {
+	return if no_color { s } else { term.bg_rgb(r, g, b, s) }
+}
 
 // Color contains an RGB value as `u8`.
 type Color = tui.Color

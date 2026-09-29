@@ -13,7 +13,6 @@ import time
 // 1902 = letters 19 and 02
 //		= SB
 // 		= ShattleBip
-const log_file_path = './shattlebip.log'
 const default_read_timeout = time.minute * 5
 const default_write_timeout = time.minute * 5
 
@@ -24,6 +23,7 @@ fn main() {
 		height: h
 	}
 	game.cfg = config.load()
+	core.no_color = game.cfg.no_color
 	game.server_addr = game.cfg.addr()
 	game.tui = tui.init(
 		user_data:   game
@@ -143,13 +143,13 @@ mut:
 	player_grid core.Grid = core.Grid{
 		name:           'Player'
 		name_colorizer: fn (str string) string {
-			return term.bright_blue(str)
+			return core.bright_blue(str)
 		}
 	}
 	enemy_grid  core.Grid = core.Grid{
 		name:           'Enemy'
 		name_colorizer: fn (str string) string {
-			return term.bright_red(str)
+			return core.bright_red(str)
 		}
 	}
 	// off-line (AI) mode. The AI fleet is kept as two plain grids rather than
@@ -909,7 +909,7 @@ fn (mut game Game) draw_settings() {
 	]
 	y := (game.height / 2) - (lines.len / 2)
 	for i, line in lines {
-		game.tui.draw_text((game.width / 2) - (line.len / 2), y + i, term.bright_white(line))
+		game.tui.draw_text((game.width / 2) - (line.len / 2), y + i, core.bright_white(line))
 	}
 }
 
@@ -965,15 +965,8 @@ fn (mut game Game) draw_help() {
 	]
 	y := (game.height / 2) - (lines.len / 2)
 	for i, line in lines {
-		game.tui.draw_text((game.width / 2) - (line.len / 2), y + i, term.bright_white(line))
+		game.tui.draw_text((game.width / 2) - (line.len / 2), y + i, core.bright_white(line))
 	}
-}
-
-// draw_text_center draws text to the screen centered on both the horizontal
-// and vertical axes.
-fn draw_text_center(mut game Game, text string) {
-	str_offset := text.len / 2
-	game.tui.draw_text(game.width / 2 - str_offset, game.height / 2, text)
 }
 
 // end ends a game and closes the connection to the server.
@@ -995,13 +988,13 @@ fn (mut game Game) reset_grids() {
 	game.player_grid = core.Grid{
 		name:           'Player'
 		name_colorizer: fn (str string) string {
-			return term.bright_blue(str)
+			return core.bright_blue(str)
 		}
 	}
 	game.enemy_grid = core.Grid{
 		name:           'Enemy'
 		name_colorizer: fn (str string) string {
-			return term.bright_red(str)
+			return core.bright_red(str)
 		}
 	}
 	game.ship_needs_placed = [.carrier, .battleship, .cruiser, .submarine, .destroyer]

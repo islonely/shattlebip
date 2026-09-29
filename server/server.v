@@ -1,7 +1,6 @@
 module main
 
 import net
-import term
 import rand
 import core
 import config
@@ -96,13 +95,13 @@ mut:
 fn main() {
 	mut server := &Server{}
 	server.init() or {
-		println(term.bright_red('[Server] ') + err.msg())
+		println(core.bright_red('[Server] ') + err.msg())
 		exit(1)
 	}
 	server.clean_games_thread = spawn server.dispose_of_ended_games()
 	for {
 		accepted := server.listener.accept() or {
-			println(term.bright_red('[Server] ') + 'Failed to start listener: ${err.msg()}')
+			println(core.bright_red('[Server] ') + 'Failed to start listener: ${err.msg()}')
 			exit(1)
 		}
 		mut socket := &PlayerTcpConn{
@@ -111,7 +110,7 @@ fn main() {
 			}
 		}
 		client_addr := socket.peer_addr() or {
-			println(term.bright_red('[Server] Failed to get peer address.'))
+			println(core.bright_red('[Server] Failed to get peer address.'))
 			socket.close() or {}
 			continue
 		}
@@ -350,7 +349,7 @@ fn (mut g Game) end() {
 fn (mut g Game) close_game() {
 	for i in 0 .. g.players.len {
 		g.players[i].close() or {
-			println(term.bright_red('[Server]') + 'Failed to properly close connection to player.')
+			println(core.bright_red('[Server]') + 'Failed to properly close connection to player.')
 		}
 	}
 }
@@ -446,7 +445,7 @@ fn (mut server Server) handle_client(raw_socket &PlayerTcpConn) {
 		server.queue << socket
 		server.mutex.unlock()
 		socket.send(core.Message.added_player_to_queue.to_bytes()) or {
-			println(term.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
+			println(core.bright_red('[Server]') + ' failed to write line: ${err.msg()}')
 			server.mutex.lock()
 			server.dequeue(socket.id)
 			server.mutex.unlock()
@@ -494,7 +493,7 @@ fn (mut server Server) handle_client(raw_socket &PlayerTcpConn) {
 		}
 
 		socket.send(core.Message.paired_with_player.to_bytes()) or {
-			println(term.bright_red('[Server]') + ' failed to write message: ${err.msg()}')
+			println(core.bright_red('[Server]') + ' failed to write message: ${err.msg()}')
 			g.end()
 			return
 		}
@@ -519,6 +518,7 @@ fn (mut p PlayerTcpConn) is_alive() bool {
 // init sets up the server and and loads config files.
 fn (mut server Server) init() ! {
 	cfg := config.load()
+	core.no_color = cfg.no_color
 	server.listener = net.listen_tcp(.ip, cfg.addr()) or {
 		return error('failed to listen on ${cfg.addr()}')
 	}

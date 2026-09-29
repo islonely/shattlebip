@@ -1,7 +1,7 @@
 module main
 
 import strings
-import term
+import core
 
 // CheckboxState is the state of the `MenuItem`.
 enum CheckboxState {
@@ -23,16 +23,16 @@ mut:
 fn (mi MenuItem) str() string {
 	str := match mi.state {
 		.disabled {
-			term.dim('[ ] ${mi.label}')
+			core.dim('[ ] ${mi.label}')
 		}
 		.unselected {
-			term.bright_white('[ ] ${mi.label}')
+			core.bright_white('[ ] ${mi.label}')
 		}
 		.selected {
-			term.bright_white('[✓] ${mi.label}')
+			core.bright_white('[✓] ${mi.label}')
 		}
 		.active {
-			term.bright_white('[*] ${mi.label}')
+			core.bright_white('[*] ${mi.label}')
 		}
 	}
 	return str
@@ -50,13 +50,13 @@ mut:
 fn (m Menu) draw_center(mut game Game) {
 	mut sb := strings.new_builder(0)
 	mut longest := m.label.len
-	sb.writeln(term.bright_white(m.label))
+	sb.writeln(core.bright_white(m.label))
 	for i, item in m.items {
 		if item.str().len > longest {
 			longest = item.str().len
 		}
 		if i == m.selected {
-			sb.writeln(term.bright_white('[*] ${item.label}'))
+			sb.writeln(core.bright_white('[*] ${item.label}'))
 			continue
 		}
 		sb.writeln(item.str())
