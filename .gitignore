@@ -1,1 +1,9 @@
 *.exe
+
+# V build artifacts
+client/client
+server/server
+core/core
+core/*_test
+*.v3cc.*
+.*.v3cc.*
