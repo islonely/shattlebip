@@ -43,7 +43,10 @@ fn main() {
 			},
 			MenuItem{
 				label: 'Offline Play'
-				state: .disabled
+				state: .unselected
+				do:    fn [mut game] () {
+					game.start_offline()
+				}
 			},
 			MenuItem{
 				label: 'Settings'
@@ -145,6 +148,15 @@ mut:
 			return term.bright_red(str)
 		}
 	}
+	// off-line (AI) mode. The AI fleet is kept as two plain grids rather than
+	// a core.Grid because three Grid fields in one struct break the v3 cgen.
+	offline     bool
+	ai_ships    [10][10]bool
+	ai_hits     [10][10]bool
+	ai_targets  []core.Pos
+	ai_tried    [10][10]bool
+	ai_move_at  u64
+	ai_think_ms int = 700
 }
 
 // draw_banner converts the Game.banner_text variable to the correct text
@@ -234,7 +246,7 @@ fn (mut game Game) my_turn_event(event &tui.Event) ! {
 		.key_down {
 			match event.code {
 				.left, .right, .up, .down {
-					game.move_cursor(event.code, mut game.enemy_grid, true)
+					game.move_cursor(event.code, mut game.enemy_grid, !game.offline)
 				}
 				.space {
 					pos := game.enemy_grid.cursor.Pos
@@ -246,11 +258,15 @@ fn (mut game Game) my_turn_event(event &tui.Event) ! {
 						game.banner_text_channel <- 'You already attacked ${game.enemy_grid.cursor.val()}.'
 						return
 					}
+					game.last_attack_pos = pos
+					game.start_flash(pos, true)
+					if game.offline {
+						game.resolve_player_attack(pos)
+						return
+					}
 					// Only send here. The server reply (hit/miss) is read by
 					// the single network thread to avoid two threads reading
 					// the same socket.
-					game.last_attack_pos = pos
-					game.start_flash(pos, true)
 					msg := core.Message.attack_cell
 					game.write_message(msg)!
 					game.write_cursor()
@@ -271,7 +287,7 @@ fn (mut game Game) their_turn_event(event &tui.Event) {
 		.key_down {
 			match event.code {
 				.left, .right, .up, .down {
-					game.move_cursor(event.code, mut game.enemy_grid, true)
+					game.move_cursor(event.code, mut game.enemy_grid, !game.offline)
 				}
 				else {}
 			}
@@ -397,8 +413,198 @@ fn random_anchor(size int, o core.Orientation) core.Pos {
 	// vfmt on
 }
 
+// place_ai_fleet scatters a full fleet and records it in the AI ship grid.
+fn (mut game Game) place_ai_fleet() {
+	mut remaining := [core.CellState.carrier, .battleship, .cruiser, .submarine, .destroyer]
+	for remaining.len > 0 {
+		ship := remaining.last()
+		size := core.ship_sizes[ship]
+		mut placed := false
+		for _ in 0 .. 500 {
+			o := unsafe { core.Orientation(rand.int_in_range(0, 2) or { 0 }) }
+			pos := random_anchor(size, o)
+			if !game.ai_can_place(size, pos, o) {
+				continue
+			}
+			game.ai_put_ship(size, pos, o)
+			remaining.pop()
+			placed = true
+			break
+		}
+		if !placed {
+			return
+		}
+	}
+}
+
+// ai_can_place reports whether a ship fits on the AI ship grid.
+fn (game Game) ai_can_place(size int, pos core.Pos, o core.Orientation) bool {
+	if pos.x < 0 || pos.y < 0 || pos.x > 9 || pos.y > 9 {
+		return false
+	}
+	match o {
+		.horizontal {
+			if pos.x + size > 10 {
+				return false
+			}
+			for x in pos.x .. pos.x + size {
+				if game.ai_ships[pos.y][x] {
+					return false
+				}
+			}
+		}
+		.vertical {
+			if pos.y + size > 10 {
+				return false
+			}
+			for y in pos.y .. pos.y + size {
+				if game.ai_ships[y][pos.x] {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// ai_put_ship marks a ship's cells on the AI ship grid.
+fn (mut game Game) ai_put_ship(size int, pos core.Pos, o core.Orientation) {
+	match o {
+		.horizontal {
+			for x in pos.x .. pos.x + size {
+				game.ai_ships[pos.y][x] = true
+			}
+		}
+		.vertical {
+			for y in pos.y .. pos.y + size {
+				game.ai_ships[y][pos.x] = true
+			}
+		}
+	}
+}
+
+// all_ai_sunk reports whether every AI ship cell has been hit.
+fn (game Game) all_ai_sunk() bool {
+	for y in 0 .. 10 {
+		for x in 0 .. 10 {
+			if game.ai_ships[y][x] && !game.ai_hits[y][x] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// start_offline begins a single-player game against a local AI.
+fn (mut game Game) start_offline() {
+	game.reset_grids()
+	game.offline = true
+	game.ai_ships = [10][10]bool{init: [10]bool{}}
+	game.ai_hits = [10][10]bool{init: [10]bool{}}
+	game.ai_targets = []core.Pos{}
+	game.ai_tried = [10][10]bool{init: [10]bool{}}
+	game.place_ai_fleet()
+	game.has_enemy_placed_ships = true
+	game.us_starts_game = (rand.int_in_range(0, 2) or { 0 }) == 0
+	game.switch_state(.placing_ships, 'Offline: place your ships, then press Enter.')
+}
+
+// resolve_player_attack applies the player's shot against the AI grid.
+fn (mut game Game) resolve_player_attack(pos core.Pos) {
+	hit := game.ai_ships[pos.y][pos.x]
+	if hit {
+		game.ai_hits[pos.y][pos.x] = true
+		game.enemy_grid.grid[pos.y][pos.x].state = .hit
+		if game.all_ai_sunk() {
+			game.enter_game_over(true, 'You win! Enemy fleet destroyed.')
+			return
+		}
+		game.banner_text_channel <- 'Hit ${game.enemy_grid.cursor.val()}! Their turn.'
+	} else {
+		game.enemy_grid.grid[pos.y][pos.x].state = .miss
+		game.banner_text_channel <- 'Miss. Their turn.'
+	}
+	game.switch_state(.their_turn, none)
+	game.ai_move_at = time.sys_mono_now() / 1_000_000 + u64(game.ai_think_ms)
+}
+
+// ai_attack picks a hunt/target square and fires at the player's grid.
+fn (mut game Game) ai_attack() {
+	mut pos := core.Pos{-1, -1}
+	if game.ai_targets.len > 0 {
+		pos = game.ai_targets.pop()
+	} else {
+		for _ in 0 .. 500 {
+			p := core.Pos{rand.int_in_range(0, 10) or { 0 }, rand.int_in_range(0, 10) or { 0 }}
+			if !game.ai_tried[p.y][p.x] {
+				pos = p
+				break
+			}
+		}
+	}
+	game.ai_move_at = 0
+	if pos.is_null() {
+		return
+	}
+	game.ai_tried[pos.y][pos.x] = true
+	game.player_grid.cursor.Pos = pos
+	game.start_flash(pos, false)
+	hit := game.player_grid.grid[pos.y][pos.x].state in [
+		core.CellState.carrier,
+		.battleship,
+		.cruiser,
+		.submarine,
+		.destroyer,
+	]
+	if hit {
+		game.player_grid.grid[pos.y][pos.x].state = .hit
+		if game.player_grid.all_ships_sunk() {
+			game.enter_game_over(false, 'You lose! Your fleet was destroyed.')
+			return
+		}
+		game.banner_text_channel <- 'Enemy hit ${game.player_grid.cursor.val()}! Your turn.'
+		for n in ship_neighbors(pos) {
+			if !game.ai_tried[n.y][n.x] {
+				game.ai_targets << n
+			}
+		}
+	} else {
+		game.player_grid.grid[pos.y][pos.x].state = .miss
+		game.banner_text_channel <- 'Enemy missed. Your turn.'
+	}
+	game.switch_state(.my_turn, none)
+}
+
+// ship_neighbors returns the orthogonal neighbours of a grid cell.
+fn ship_neighbors(pos core.Pos) []core.Pos {
+	mut out := []core.Pos{}
+	if pos.x > 0 {
+		out << core.Pos{pos.x - 1, pos.y}
+	}
+	if pos.x < 9 {
+		out << core.Pos{pos.x + 1, pos.y}
+	}
+	if pos.y > 0 {
+		out << core.Pos{pos.x, pos.y - 1}
+	}
+	if pos.y < 9 {
+		out << core.Pos{pos.x, pos.y + 1}
+	}
+	return out
+}
+
 // confirm_placement tells the server the fleet is ready and moves on.
 fn (mut game Game) confirm_placement() ! {
+	if game.offline {
+		game.has_enemy_placed_ships = true
+		if game.us_starts_game {
+			game.switch_state(.my_turn, 'Offline game start! Your turn first.')
+		} else {
+			game.switch_state(.their_turn, 'Offline game start! The AI goes first.')
+			game.ai_move_at = time.sys_mono_now() / 1_000_000 + u64(game.ai_think_ms)
+		}
+		return
+	}
 	game.write_message(.placed_ships)!
 	game.server.flush()!
 	if game.has_enemy_placed_ships {
@@ -537,6 +743,10 @@ fn frame(mut game Game) {
 
 	_ := game.banner_text_channel.try_pop(mut game.banner_text)
 	game.update_flash()
+	if game.offline && game.state == .their_turn && game.ai_move_at > 0
+		&& time.sys_mono_now() / 1_000_000 >= game.ai_move_at {
+		game.ai_attack()
+	}
 
 	match game.state {
 		.wait_for_enemy_ship_placement { game.wait_for_enemy_ship_placement_frame() }
@@ -654,6 +864,12 @@ fn (mut game Game) reset_grids() {
 	game.opponent_requested_rematch = false
 	game.won = false
 	game.last_attack_pos = core.Pos{}
+	game.offline = false
+	game.ai_ships = [10][10]bool{init: [10]bool{}}
+	game.ai_hits = [10][10]bool{init: [10]bool{}}
+	game.ai_targets = []core.Pos{}
+	game.ai_tried = [10][10]bool{init: [10]bool{}}
+	game.ai_move_at = 0
 }
 
 // enter_game_over switches to the game over screen with the given result.
@@ -686,6 +902,10 @@ fn (mut game Game) game_over_frame() {
 
 // request_rematch asks the server for another round against the same opponent.
 fn (mut game Game) request_rematch() {
+	if game.offline {
+		game.start_offline()
+		return
+	}
 	game.write_message(.rematch_request) or { return }
 	game.server.flush() or { return }
 	game.banner_text_channel <- 'Waiting for opponent to accept the rematch...'
@@ -693,8 +913,19 @@ fn (mut game Game) request_rematch() {
 
 // find_new_opponent leaves the current opponent and reconnects to the queue.
 fn (mut game Game) find_new_opponent() {
+	if game.offline {
+		game.back_to_menu('Returned to the main menu.')
+		return
+	}
 	game.write_message(.find_new_opponent) or {}
 	game.server.flush() or {}
 	game.want_requeue = true
 	game.server.close() or {}
+}
+
+// back_to_menu returns to the main menu without touching any connection.
+fn (mut game Game) back_to_menu(msg string) {
+	game.offline = false
+	game.switch_state(.main_menu, none)
+	game.banner_text_channel <- msg
 }
