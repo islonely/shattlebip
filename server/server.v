@@ -245,6 +245,14 @@ fn (mut g Game) gameplay(index int) {
 			.not_your_turn {
 				// no longer sent by clients; ignore defensively
 			}
+			.sunk_carrier, .sunk_battleship, .sunk_cruiser, .sunk_submarine, .sunk_destroyer {
+				// this player just lost a ship; tell the attacker
+				enemy.send(raw_msg) or {
+					println('[Server] failed to write sunk message: ${err.msg()}')
+					g.end()
+					return
+				}
+			}
 			.defeated {
 				// This player's fleet is gone; let the opponent know they won.
 				g.mutex.lock()

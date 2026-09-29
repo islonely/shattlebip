@@ -131,6 +131,19 @@ pub fn (g Grid) all_ships_sunk() bool {
 	return true
 }
 
+// ship_fully_hit returns true when no cell of the given ship type is left
+// un-hit, meaning that ship has been sunk.
+pub fn (g Grid) ship_fully_hit(typ CellState) bool {
+	for row in g.grid {
+		for cell in row {
+			if cell.state == typ {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // string converts the `Grid` to a string for terminal output with
 // the cursor denoted by a yellow color.
 pub fn (g Grid) str() string {

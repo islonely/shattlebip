@@ -119,6 +119,8 @@ mut:
 	won                        bool
 	want_requeue               bool
 	opponent_requested_rematch bool
+	player_ships_left          int         = 5
+	enemy_ships_left           int         = 5
 	banner_text                string      = '                          SHATTLEBIP                          '
 	banner_text_channel        chan string = chan string{ cap: 100 }
 	server                     core.BufferedTcpConn
@@ -525,13 +527,58 @@ fn (mut game Game) resolve_player_attack(pos core.Pos) {
 			game.enter_game_over(true, 'You win! Enemy fleet destroyed.')
 			return
 		}
-		game.banner_text_channel <- 'Hit ${game.enemy_grid.cursor.val()}! Their turn.'
+		size := game.sunk_ai_ship_size(pos)
+		if size > 0 {
+			game.enemy_ships_left--
+			game.banner_text_channel <- 'You sank the enemy ${ship_name_for_size(size)}!'
+		} else {
+			game.banner_text_channel <- 'Hit ${game.enemy_grid.cursor.val()}! Their turn.'
+		}
 	} else {
 		game.enemy_grid.grid[pos.y][pos.x].state = .miss
 		game.banner_text_channel <- 'Miss. Their turn.'
 	}
 	game.switch_state(.their_turn, none)
 	game.ai_move_at = time.sys_mono_now() / 1_000_000 + u64(game.ai_think_ms)
+}
+
+// sunk_ai_ship_size returns the size of the AI ship containing `pos` if that
+// whole ship is now hit, otherwise 0.
+fn (game Game) sunk_ai_ship_size(pos core.Pos) int {
+	mut stack := []core.Pos{}
+	stack << pos
+	mut seen := [10][10]bool{init: [10]bool{}}
+	seen[pos.y][pos.x] = true
+	mut size := 0
+	mut all_hit := true
+	for stack.len > 0 {
+		p := stack.pop()
+		size++
+		if !game.ai_hits[p.y][p.x] {
+			all_hit = false
+		}
+		for n in ship_neighbors(p) {
+			if game.ai_ships[n.y][n.x] && !seen[n.y][n.x] {
+				seen[n.y][n.x] = true
+				stack << n
+			}
+		}
+	}
+	if all_hit {
+		return size
+	}
+	return 0
+}
+
+// ship_name_for_size names a ship from its length.
+fn ship_name_for_size(size int) string {
+	return match size {
+		5 { 'Carrier' }
+		4 { 'Battleship' }
+		3 { 'Cruiser' }
+		2 { 'Destroyer' }
+		else { 'ship' }
+	}
 }
 
 // ai_attack picks a hunt/target square and fires at the player's grid.
@@ -555,7 +602,8 @@ fn (mut game Game) ai_attack() {
 	game.ai_tried[pos.y][pos.x] = true
 	game.player_grid.cursor.Pos = pos
 	game.start_flash(pos, false)
-	hit := game.player_grid.grid[pos.y][pos.x].state in [
+	existing := game.player_grid.grid[pos.y][pos.x].state
+	hit := existing in [
 		core.CellState.carrier,
 		.battleship,
 		.cruiser,
@@ -568,7 +616,12 @@ fn (mut game Game) ai_attack() {
 			game.enter_game_over(false, 'You lose! Your fleet was destroyed.')
 			return
 		}
-		game.banner_text_channel <- 'Enemy hit ${game.player_grid.cursor.val()}! Your turn.'
+		if game.player_grid.ship_fully_hit(existing) {
+			game.player_ships_left--
+			game.banner_text_channel <- 'Enemy sank your ${ship_name(existing)}!'
+		} else {
+			game.banner_text_channel <- 'Enemy hit ${game.player_grid.cursor.val()}! Your turn.'
+		}
 		for n in ship_neighbors(pos) {
 			if !game.ai_tried[n.y][n.x] {
 				game.ai_targets << n
@@ -579,6 +632,42 @@ fn (mut game Game) ai_attack() {
 		game.banner_text_channel <- 'Enemy missed. Your turn.'
 	}
 	game.switch_state(.my_turn, none)
+}
+
+// ship_name returns the pretty name of a ship cell state.
+fn ship_name(typ core.CellState) string {
+	return match typ {
+		.carrier { 'Carrier' }
+		.battleship { 'Battleship' }
+		.cruiser { 'Cruiser' }
+		.submarine { 'Submarine' }
+		.destroyer { 'Destroyer' }
+		else { 'ship' }
+	}
+}
+
+// sunk_message maps a ship type to the message that announces its loss.
+fn sunk_message(typ core.CellState) core.Message {
+	return match typ {
+		.carrier { core.Message.sunk_carrier }
+		.battleship { core.Message.sunk_battleship }
+		.cruiser { core.Message.sunk_cruiser }
+		.submarine { core.Message.sunk_submarine }
+		.destroyer { core.Message.sunk_destroyer }
+		else { core.Message.null }
+	}
+}
+
+// sunk_ship_name maps a sunk message back to the ship's name.
+fn sunk_ship_name(msg core.Message) string {
+	return match msg {
+		.sunk_carrier { 'Carrier' }
+		.sunk_battleship { 'Battleship' }
+		.sunk_cruiser { 'Cruiser' }
+		.sunk_submarine { 'Submarine' }
+		.sunk_destroyer { 'Destroyer' }
+		else { 'ship' }
+	}
 }
 
 // ship_neighbors returns the orthogonal neighbours of a grid cell.
@@ -771,6 +860,7 @@ fn frame(mut game Game) {
 // .wait_for_enemy_ship_placement state.
 fn (mut game Game) wait_for_enemy_ship_placement_frame() {
 	game.draw_game()
+	game.draw_counters()
 }
 
 // main_menu_frame draws the screen in the .main_menu state.
@@ -802,6 +892,7 @@ fn (mut game Game) draw_settings() {
 // my_turn_frame draws the screen in the .my_turn state.
 fn (mut game Game) my_turn_frame() {
 	game.draw_game()
+	game.draw_counters()
 }
 
 // placing_ships_frame draws the screen in the .placing_ships state.
@@ -814,6 +905,7 @@ fn (mut game Game) placing_ships_frame() {
 // their_turn_frame draws the screen in the .their_turn state.
 fn (mut game Game) their_turn_frame() {
 	game.draw_game()
+	game.draw_counters()
 }
 
 // draw_game draws the player grid, enemy player grid, cursor position, and
@@ -825,6 +917,11 @@ fn (mut game Game) draw_game() {
 	game.tui.draw_text(0, 15, Banner.text(game.banner_text))
 	game.tui.draw_text(0, 19, 'Player Cursor: ${game.player_grid.cursor.val()}')
 	game.tui.draw_text(0, 20, 'Enemy Cursor: ${game.enemy_grid.cursor.val()}')
+}
+
+// draw_counters shows how many ships each side has left.
+fn (mut game Game) draw_counters() {
+	game.tui.draw_text(0, 21, 'Your ships left: ${game.player_ships_left}   Enemy ships left: ${game.enemy_ships_left}')
 }
 
 // draw_text_center draws text to the screen centered on both the horizontal
@@ -869,6 +966,8 @@ fn (mut game Game) reset_grids() {
 	game.us_starts_game = false
 	game.opponent_requested_rematch = false
 	game.won = false
+	game.player_ships_left = 5
+	game.enemy_ships_left = 5
 	game.last_attack_pos = core.Pos{}
 	game.offline = false
 	game.ai_ships = [10][10]bool{init: [10]bool{}}

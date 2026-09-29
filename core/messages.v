@@ -23,6 +23,12 @@ pub enum Message as u32 {
 	find_new_opponent
 	// a player gives up the current round
 	resign
+	// a defending player lost a whole ship; forwarded to the attacker
+	sunk_carrier
+	sunk_battleship
+	sunk_cruiser
+	sunk_submarine
+	sunk_destroyer
 	client_upper
 	// server messages
 	server_lower = 0x02_000000

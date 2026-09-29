@@ -115,7 +115,7 @@ fn (mut game Game) connected_my_turn(msg core.Message) ! {
 		.set_cursor_pos {
 			game.read_cursor()
 		}
-		.hit, .miss, .not_your_turn, .opponent_defeated, .opponent_resigned {
+		.hit, .miss, .not_your_turn, .opponent_defeated, .opponent_resigned, .sunk_carrier, .sunk_battleship, .sunk_cruiser, .sunk_submarine, .sunk_destroyer {
 			game.handle_attack_reply(msg)
 		}
 		else {
@@ -148,6 +148,10 @@ fn (mut game Game) handle_attack_reply(msg core.Message) {
 		.opponent_resigned {
 			game.enter_game_over(true, 'You win! Opponent resigned.')
 			return
+		}
+		.sunk_carrier, .sunk_battleship, .sunk_cruiser, .sunk_submarine, .sunk_destroyer {
+			game.enemy_ships_left--
+			game.banner_text_channel <- 'You sank the enemy ${sunk_ship_name(msg)}!'
 		}
 		else {}
 	}
@@ -183,7 +187,7 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 		.set_cursor_pos {
 			game.read_cursor()
 		}
-		.hit, .miss, .not_your_turn, .opponent_defeated, .opponent_resigned {
+		.hit, .miss, .not_your_turn, .opponent_defeated, .opponent_resigned, .sunk_carrier, .sunk_battleship, .sunk_cruiser, .sunk_submarine, .sunk_destroyer {
 			game.handle_attack_reply(msg)
 		}
 		.attack_cell {
@@ -216,6 +220,7 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 			}
 			if is_cell_occupied {
 				game.player_grid.grid[pos.y][pos.x].state = .hit
+				game.write_message(core.Message.hit)!
 				// the fleet is gone, so this player has lost the round
 				if game.player_grid.all_ships_sunk() {
 					game.write_message(core.Message.defeated)!
@@ -223,8 +228,13 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 					game.enter_game_over(false, 'You lose! Your fleet was destroyed.')
 					return
 				}
-				game.banner_text_channel <- 'Hit ${game.player_grid.cursor.val()}! Your turn.'
-				game.write_message(core.Message.hit)!
+				if game.player_grid.ship_fully_hit(existing) {
+					game.player_ships_left--
+					game.write_message(sunk_message(existing))!
+					game.banner_text_channel <- 'You lost your ${ship_name(existing)}!'
+				} else {
+					game.banner_text_channel <- 'Hit ${game.player_grid.cursor.val()}! Your turn.'
+				}
 			} else {
 				game.player_grid.grid[pos.y][pos.x].state = .miss
 				game.banner_text_channel <- 'Miss. Your turn.'
