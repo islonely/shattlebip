@@ -115,7 +115,7 @@ fn (mut game Game) connected_my_turn(msg core.Message) ! {
 		.set_cursor_pos {
 			game.read_cursor()
 		}
-		.hit, .miss, .not_your_turn, .opponent_defeated {
+		.hit, .miss, .not_your_turn, .opponent_defeated, .opponent_resigned {
 			game.handle_attack_reply(msg)
 		}
 		else {
@@ -143,6 +143,10 @@ fn (mut game Game) handle_attack_reply(msg core.Message) {
 		.opponent_defeated {
 			game.enemy_grid.grid[pos.y][pos.x].state = .hit
 			game.enter_game_over(true, 'You win! Enemy fleet destroyed.')
+			return
+		}
+		.opponent_resigned {
+			game.enter_game_over(true, 'You win! Opponent resigned.')
 			return
 		}
 		else {}
@@ -179,7 +183,7 @@ fn (mut game Game) connected_their_turn(msg core.Message) ! {
 		.set_cursor_pos {
 			game.read_cursor()
 		}
-		.hit, .miss, .not_your_turn, .opponent_defeated {
+		.hit, .miss, .not_your_turn, .opponent_defeated, .opponent_resigned {
 			game.handle_attack_reply(msg)
 		}
 		.attack_cell {

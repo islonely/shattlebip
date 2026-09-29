@@ -273,6 +273,9 @@ fn (mut game Game) my_turn_event(event &tui.Event) ! {
 					game.server.flush()!
 					game.switch_state(.their_turn, none)
 				}
+				.f {
+					game.resign()
+				}
 				else {}
 			}
 		}
@@ -288,6 +291,9 @@ fn (mut game Game) their_turn_event(event &tui.Event) {
 			match event.code {
 				.left, .right, .up, .down {
 					game.move_cursor(event.code, mut game.enemy_grid, !game.offline)
+				}
+				.f {
+					game.resign()
 				}
 				else {}
 			}
@@ -898,6 +904,15 @@ fn (mut game Game) game_over_event(event &tui.Event) {
 fn (mut game Game) game_over_frame() {
 	game.draw_game()
 	game.game_over_menu.draw(mut game, 2, 22)
+}
+
+// resign gives up the current round.
+fn (mut game Game) resign() {
+	if !game.offline {
+		game.write_message(.resign) or {}
+		game.server.flush() or {}
+	}
+	game.enter_game_over(false, 'You resigned.')
 }
 
 // request_rematch asks the server for another round against the same opponent.

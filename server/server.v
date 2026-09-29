@@ -286,6 +286,19 @@ fn (mut g Game) gameplay(index int) {
 				g.end()
 				return
 			}
+			.resign {
+				// the resigner lost; let the opponent claim the win and keep
+				// the game open so they can rematch
+				g.mutex.lock()
+				g.phase = .post_game
+				g.post_game_since = time.now().unix()
+				g.mutex.unlock()
+				enemy.send(core.Message.opponent_resigned.to_bytes()) or {
+					println('[Server] failed to write resignation: ${err.msg()}')
+					g.end()
+					return
+				}
+			}
 			.terminate_connection {
 				g.end()
 				return

@@ -21,6 +21,8 @@ pub enum Message as u32 {
 	// post-game choices
 	rematch_request
 	find_new_opponent
+	// a player gives up the current round
+	resign
 	client_upper
 	// server messages
 	server_lower = 0x02_000000
@@ -40,6 +42,8 @@ pub enum Message as u32 {
 	rematch_start
 	// the opponent chose to find a new opponent or disconnected
 	opponent_left
+	// the opponent resigned; the recipient won
+	opponent_resigned
 	server_upper
 }
 
