@@ -7,6 +7,7 @@ import config
 import math
 import time
 import sync
+import os
 
 const default_read_timeout = time.minute * 5
 const default_write_timeout = time.second * 10
@@ -518,7 +519,9 @@ fn (mut p PlayerTcpConn) is_alive() bool {
 // init sets up the server and and loads config files.
 fn (mut server Server) init() ! {
 	cfg := config.load()
-	core.no_color = cfg.no_color
+	if cfg.no_color {
+		os.setenv('NO_COLOR', '1', true)
+	}
 	server.listener = net.listen_tcp(.ip, cfg.addr()) or {
 		return error('failed to listen on ${cfg.addr()}')
 	}

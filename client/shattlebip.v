@@ -1,6 +1,7 @@
 module main
 
 import term.ui as tui
+import os
 import term
 import rand
 import log
@@ -23,7 +24,9 @@ fn main() {
 		height: h
 	}
 	game.cfg = config.load()
-	core.no_color = game.cfg.no_color
+	if game.cfg.no_color {
+		os.setenv('NO_COLOR', '1', true)
+	}
 	game.server_addr = game.cfg.addr()
 	game.tui = tui.init(
 		user_data:     game
@@ -131,7 +134,7 @@ mut:
 	show_help                  bool
 	quit_armed_at              u64
 	network_thread             thread
-	logger                     shared log.ThreadSafeLog
+	logger                     &log.ThreadSafeLog = log.new_thread_safe_log()
 	// cell the player most recently fired at; used to place the reply
 	// because the cursor may move while waiting for it.
 	last_attack_pos core.Pos
@@ -1049,6 +1052,7 @@ fn (mut game Game) draw_help() {
 
 // end ends a game and closes the connection to the server.
 fn (mut game Game) end(msg string) {
+	game.logger.info('session ended: ${msg}')
 	game.switch_state(.main_menu, none)
 	game.server.close() or {}
 	game.banner_text_channel <- msg

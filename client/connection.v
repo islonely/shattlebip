@@ -15,6 +15,7 @@ fn (mut game Game) initiate_server_connection() {
 		game.banner_text_channel <- 'Initiating server connection.'
 		mut conn := net.dial_tcp(game.server_addr) or {
 			game.banner_text_channel <- 'Failed to connect to server.'
+			game.logger.warn('failed to connect to ${game.server_addr}: ${err.msg()}')
 			if index := game.menu.find('Disconnect') {
 				game.menu.items[index].state = .disabled
 			}
