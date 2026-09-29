@@ -26,10 +26,11 @@ fn main() {
 	core.no_color = game.cfg.no_color
 	game.server_addr = game.cfg.addr()
 	game.tui = tui.init(
-		user_data:   game
-		event_fn:    event
-		frame_fn:    frame
-		hide_cursor: true
+		user_data:     game
+		event_fn:      event
+		frame_fn:      frame
+		hide_cursor:   true
+		mouse_enabled: true
 	)
 	game.menu = Menu{
 		label: ''
@@ -209,6 +210,25 @@ fn event(event &tui.Event, mut game Game) {
 	}
 	game.tui.clear()
 
+	if event.typ == .mouse_down {
+		if game.show_help {
+			game.show_help = false
+			return
+		}
+		match game.state {
+			.main_menu { game.main_menu_click(event.x, event.y) }
+			.my_turn { game.grid_mouse_click(event.x, event.y, true) }
+			.their_turn { game.grid_mouse_click(event.x, event.y, true) }
+			.wait_for_enemy_ship_placement { game.grid_mouse_click(event.x, event.y, true) }
+			.placing_ships {
+				game.grid_mouse_click(event.x, event.y, false)
+				game.update_ship_preview()
+			}
+			.game_over { game.game_over_click(event.x, event.y) }
+		}
+		return
+	}
+
 	match game.state {
 		.main_menu {
 			game.main_menu_event(event)
@@ -259,6 +279,64 @@ fn (mut game Game) main_menu_event(event &tui.Event) {
 		}
 		else {}
 	}
+}
+
+// main_menu_click selects and activates the menu item on the clicked row.
+fn (mut game Game) main_menu_click(x int, y int) {
+	if game.show_settings {
+		game.show_settings = false
+		return
+	}
+	mut longest := game.menu.label.len
+	for item in game.menu.items {
+		if item.str().len > longest {
+			longest = item.str().len
+		}
+	}
+	cy := (game.height / 2) - ((game.menu.items.len + 1) / 2)
+	for i, item in game.menu.items {
+		if y == cy + 1 + i && item.state != .disabled {
+			game.menu.selected = i
+			game.menu.selected().do()
+			return
+		}
+	}
+}
+
+// game_over_click selects and activates a post-game menu item.
+fn (mut game Game) game_over_click(x int, y int) {
+	for i, item in game.game_over_menu.items {
+		if y == 23 + i && item.state != .disabled {
+			game.game_over_menu.selected = i
+			game.game_over_menu.selected().do()
+			return
+		}
+	}
+}
+
+// grid_mouse_click maps a screen click to a board cell and moves the cursor.
+fn (mut game Game) grid_mouse_click(x int, y int, enemy bool) {
+	row := y - 3
+	player_w := game.player_grid.str().split_into_lines()[0].len
+	enemy_start := player_w + 10
+	if enemy {
+		game.click_cell(x - enemy_start - 5, row, mut game.enemy_grid)
+	} else {
+		game.click_cell(x - 5, row, mut game.player_grid)
+	}
+}
+
+// click_cell moves the grid cursor to the cell under a board pixel.
+fn (mut game Game) click_cell(px int, py int, mut grid core.Grid) {
+	if px < 0 || py < 0 || py > 9 {
+		return
+	}
+	cx := px / 2
+	if cx > 9 {
+		return
+	}
+	grid.cursor.x = cx
+	grid.cursor.y = py
 }
 
 // my_turn_event handles mouse, keyboard, and window events that
